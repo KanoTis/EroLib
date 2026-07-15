@@ -1,0 +1,23 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      HOST: "0.0.0.0"
+      AUTH_USERNAME: admin
+      # Leave empty to disable auth (do not expose publicly)
+      AUTH_PASSWORD: ""
+      CREDENTIALS_SECRET: change-me-to-a-long-random-string
+      DATA_DIR: /data
+      MEDIA_DIR: /media
+      CACHE_DIR: /cache
+      SYNC_INTERVAL_HOURS: "4"
+      MAX_DOWNLOAD_CONCURRENCY: "2"
+      WEB_DIST_DIR: /app/apps/web/dist
+    volumes:
+      - ./data:/data
+      - ./media:/media
+      - ./cache:/cache
+    restart: unless-stopped

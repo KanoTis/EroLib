@@ -1,0 +1,24 @@
+{
+  "name": "erolib",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Self-hosted audio media backup server (Otobanana + Koe-koe)",
+  "packageManager": "pnpm@10.30.1",
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @erolib/server --filter @erolib/web dev",
+    "dev:server": "pnpm --filter @erolib/server dev",
+    "dev:web": "pnpm --filter @erolib/web dev",
+    "build": "pnpm --filter @erolib/shared build && pnpm --filter @erolib/server build && pnpm --filter @erolib/web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @erolib/server test",
+    "start": "pnpm --filter @erolib/server start"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  }
+}
