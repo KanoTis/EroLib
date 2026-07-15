@@ -102,12 +102,101 @@ export function parseBookmarkIds(html: string): string[] {
   return ids;
 }
 
+const TITLE_NOISE = [
+  /スマートフォンから録音した音声を投稿できる/,
+  /エロ声やオナニーボイス/,
+  /喘ぎ声などエッチ/,
+  /音声掲示板/,
+  /アダルトな音声/,
+  /^koe-?koe$/i,
+  /^コエコエ/,
+];
+
+function stripTags(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isNoiseTitle(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (t.length > 120) return true;
+  return TITLE_NOISE.some((re) => re.test(t));
+}
+
+function pickTitle(html: string, workId: string): string {
+  const candidates: string[] = [];
+
+  const og =
+    /property=["']og:title["'][^>]*content=["']([^"']+)["']/i.exec(html) ??
+    /content=["']([^"']+)["'][^>]*property=["']og:title["']/i.exec(html);
+  if (og?.[1]) candidates.push(stripTags(og[1]));
+
+  // Prefer h2 near the audio player / duration block
+  const audioIdx = html.search(/<audio[\s>]|class=["'][^"']*audioTime/i);
+  if (audioIdx >= 0) {
+    const window = html.slice(Math.max(0, audioIdx - 2500), audioIdx + 500);
+    const near = /<h2[^>]*>([\s\S]*?)<\/h2>/i.exec(window);
+    if (near?.[1]) candidates.push(stripTags(near[1]));
+  }
+
+  const h2re = /<h2[^>]*>([\s\S]*?)<\/h2>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = h2re.exec(html)) !== null) {
+    if (m[1]) candidates.push(stripTags(m[1]));
+  }
+
+  const titleTag = /<title>([^<]+)<\/title>/i.exec(html);
+  if (titleTag?.[1]) {
+    candidates.push(
+      stripTags(titleTag[1])
+        .replace(/\s*[|｜\-–—].*$/, "")
+        .trim(),
+    );
+  }
+
+  for (const c of candidates) {
+    const cleaned = c.replace(/\s*[|｜].*$/, "").trim();
+    if (!isNoiseTitle(cleaned) && cleaned !== workId) return cleaned;
+  }
+  return workId;
+}
+
+function pickDescription(html: string): string | undefined {
+  const detail =
+    /<div[^>]*class=["'][^"']*desc[^"']*detail[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(
+      html,
+    ) ??
+    /<div[^>]*class=["'][^"']*detail[^"']*desc[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(
+      html,
+    );
+  if (detail?.[1]) {
+    const text = stripTags(detail[1]);
+    if (text && !isNoiseTitle(text)) return text;
+  }
+  const desc =
+    /<div[^>]*class=["'][^"']*\bdesc\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(
+      html,
+    );
+  if (desc?.[1]) {
+    const text = stripTags(desc[1]);
+    if (text && !isNoiseTitle(text) && text.length < 2000) return text;
+  }
+  return undefined;
+}
+
 export function parseDetail(html: string, workId: string): WorkMetadata {
-  const titleMatch =
-    /<h2[^>]*>([\s\S]*?)<\/h2>/i.exec(html) ??
-    /<title>([^<]+)<\/title>/i.exec(html);
-  let title = titleMatch?.[1]?.replace(/<[^>]+>/g, "").trim() ?? workId;
-  title = title.replace(/\s*[|｜].*$/, "").trim() || workId;
+  const title = pickTitle(html, workId);
 
   const sourceMatch =
     /<source[^>]+src=["']([^"']+)["'][^>]*>/i.exec(html) ??
@@ -121,6 +210,10 @@ export function parseDetail(html: string, workId: string): WorkMetadata {
       : src.startsWith("http")
         ? src
         : audioUrlForId(workId);
+  } else if (sourceMatch?.[0] && !sourceMatch[1]) {
+    // matched bare file.koe-koe path with capture group only on id form
+    const idOnly = /file\.koe-koe\.com\/sound\/upload\/(\d+)\.mp3/i.exec(html);
+    if (idOnly?.[1]) audioUrl = audioUrlForId(idOnly[1]);
   }
 
   const authorMatch =
@@ -144,22 +237,20 @@ export function parseDetail(html: string, workId: string): WorkMetadata {
     if (durationSeconds === 0) durationSeconds = null;
   }
 
-  const iconMatch = /src=["'](\/img\/(?:female|male|couple)[^"']*)["']/i.exec(
-    html,
-  );
-  const coverUrl = iconMatch?.[1]
-    ? `${BASE}${iconMatch[1]}`
-    : null;
+  // Koe-koe has no real cover/avatar — gender icons must not become coverUrl.
+  let gender: string | undefined;
+  const iconMatch = /src=["']\/img\/(female|male|couple)[^"']*["']/i.exec(html);
+  if (iconMatch?.[1]) gender = iconMatch[1].toLowerCase();
 
-  // Prefer stable author key from search link if present
   let authorId: string | null = null;
-  const authorLink =
-    /search\.php\?word=([^&"']+)/i.exec(html);
+  const authorLink = /search\.php\?word=([^&"']+)/i.exec(html);
   if (authorLink?.[1]) {
     authorId = decodeURIComponent(authorLink[1]);
   } else if (authorName) {
     authorId = authorName;
   }
+
+  const description = pickDescription(html);
 
   return {
     provider: "koekoe",
@@ -167,10 +258,12 @@ export function parseDetail(html: string, workId: string): WorkMetadata {
     authorId,
     authorName,
     title,
+    description,
     durationSeconds,
     audioUrl,
-    coverUrl,
-    extra: {},
+    coverUrl: null,
+    sourceUrl: detailUrl(workId),
+    extra: gender ? { gender } : {},
   };
 }
 

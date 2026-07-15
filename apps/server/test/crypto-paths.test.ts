@@ -70,6 +70,7 @@ describe("koekoe parsers", () => {
       <div class="audioTime audioTime_female">4分48秒</div>
       <a href="search.php?word=alice&g=1&m=1"><span class="user_name">alice</span></a>
       <img src="/img/female3.png">
+      <div class="desc detail"><p>説明テキスト</p></div>
     `;
     const meta = parseDetail(html, "761964");
     assert.equal(meta.title, "テストタイトル");
@@ -77,5 +78,8 @@ describe("koekoe parsers", () => {
     assert.equal(meta.audioUrl, "https://file.koe-koe.com/sound/upload/761964.mp3");
     assert.equal(meta.durationSeconds, 4 * 60 + 48);
     assert.equal(meta.authorName, "alice");
+    assert.equal(meta.description, "説明テキスト");
+    assert.equal(meta.coverUrl, null);
+    assert.equal(meta.sourceUrl, "https://koe-koe.com/detail.php?n=761964");
   });
 });

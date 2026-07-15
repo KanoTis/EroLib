@@ -113,6 +113,31 @@ function toPublicAccount(
   };
 }
 
+function sourceUrlFromMeta(metaJson: string | null, provider: ProviderId, workId: string): string | null {
+  if (metaJson) {
+    try {
+      const parsed: unknown = JSON.parse(metaJson);
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "sourceUrl" in parsed &&
+        typeof (parsed as { sourceUrl?: unknown }).sourceUrl === "string"
+      ) {
+        return (parsed as { sourceUrl: string }).sourceUrl;
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (provider === "koekoe") {
+    return `https://koe-koe.com/detail.php?n=${encodeURIComponent(workId)}`;
+  }
+  if (provider === "otobanana") {
+    return `https://otobanana.com/general/cast/${encodeURIComponent(workId)}`;
+  }
+  return null;
+}
+
 function toPublicWork(row: typeof works.$inferSelect): WorkPublic {
   return {
     id: row.id,
@@ -127,6 +152,11 @@ function toPublicWork(row: typeof works.$inferSelect): WorkPublic {
     durationSeconds: row.durationSeconds,
     audioExt: row.audioExt,
     coverPath: row.coverRelPath,
+    sourceUrl: sourceUrlFromMeta(
+      row.metaJson,
+      row.provider as ProviderId,
+      row.workId,
+    ),
     error: row.error,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -593,6 +623,56 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       "Accept-Ranges": "bytes",
       "Content-Type": contentType,
     });
+  });
+
+  app.get("/api/works/:provider/:workId/cover", async (c) => {
+    const provider = c.req.param("provider") as ProviderId;
+    const workId = c.req.param("workId");
+    const [row] = await db
+      .select()
+      .from(works)
+      .where(and(eq(works.provider, provider), eq(works.workId, workId)))
+      .limit(1);
+    if (!row) return c.json({ error: "Not found" }, 404);
+    if (!row.coverRelPath) return c.json({ error: "No cover" }, 404);
+    const coverPath = path.join(config.mediaDir, row.coverRelPath);
+    if (!(await pathExists(coverPath))) {
+      return c.json({ error: "Cover file missing" }, 404);
+    }
+    const ext = path.extname(coverPath).toLowerCase();
+    const contentType =
+      ext === ".png"
+        ? "image/png"
+        : ext === ".webp"
+          ? "image/webp"
+          : ext === ".gif"
+            ? "image/gif"
+            : "image/jpeg";
+    const st = statSync(coverPath);
+    const stream = createReadStream(coverPath);
+    return c.body(Readable.toWeb(stream) as ReadableStream, 200, {
+      "Content-Length": String(st.size),
+      "Content-Type": contentType,
+      "Cache-Control": "private, max-age=3600",
+    });
+  });
+
+  app.post("/api/works/:provider/:workId/refresh-metadata", async (c) => {
+    const provider = c.req.param("provider") as ProviderId;
+    const workId = c.req.param("workId");
+    try {
+      const result = await runner.refreshWorkMetadata(provider, workId);
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes("下载进行中")) {
+        return c.json({ error: message }, 409);
+      }
+      if (message === "Work not found") {
+        return c.json({ error: message }, 404);
+      }
+      return c.json({ error: message }, 400);
+    }
   });
 
   app.get("/api/jobs", async (c) => {

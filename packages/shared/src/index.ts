@@ -40,6 +40,8 @@ export interface WorkMetadata {
   durationSeconds?: number | null;
   audioUrl: string;
   coverUrl?: string | null;
+  /** Canonical public page for the work */
+  sourceUrl?: string | null;
   tags?: string[];
   createdAt?: string | null;
   extra?: Record<string, unknown>;
@@ -94,6 +96,7 @@ export interface WorkPublic {
   durationSeconds: number | null;
   audioExt: string | null;
   coverPath: string | null;
+  sourceUrl: string | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;

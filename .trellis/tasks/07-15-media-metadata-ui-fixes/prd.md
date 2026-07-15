@@ -2,106 +2,117 @@
 
 ## Goal
 
-修复本地媒体库的元数据展示与抓取质量问题，补齐封面/简介/原始链接链路，并把同步与下载任务拆成独立页面；下载落盘时把关键元数据写入音频 ID3，方便外部播放器识别。
+修复本地媒体库的元数据展示与抓取质量问题，补齐封面/简介/原始链接链路，并把同步与下载任务拆成独立页面；下载落盘时把关键元数据写入音频 ID3，方便外部播放器识别。存量错误数据通过**单条「刷新元数据」**修复，不做全库自动 backfill。
 
 ## Background / Confirmed Facts
 
-来自当前代码与用户反馈（非假设）：
-
 | # | 现象 | 代码证据 |
 |---|------|----------|
-| 1 | 前端看不到封面 | `LibraryPage.tsx` / `WorkDetailPage.tsx` 仅渲染 `IconWave` 占位；`WorkPublic.coverPath` 已有字段，但无 `/api/works/.../cover` 路由（`app.ts` 仅有 `/audio`） |
-| 2 | 简介不完整 | `WorkMetadata.description` 与 DB `works.description` 已存在；Otobanana `castToMeta` 取 `post.text`；Koe-koe `parseDetail` **未抓 description**（逆向文档：`<div class="desc detail"><p>{description}</p></div>`） |
-| 3 | Koe-koe 标题错误 | 用户例：网站标题 `ビデオ通話で見られながらオナニーしてみた`，实际入库为站点宣传文案；`parseDetail` 用首个 `<h2>` / `<title>`，易命中非作品标题 |
-| 4 | 媒体库缺渠道筛选 | `GET /api/works?provider=` 与 `api.works({ provider })` 已支持；`LibraryPage` 仅有状态筛选 UI |
-| 5 | 无 ID3 写入 | 下载只写 `audio.<ext>` + `meta.json` + 可选 `cover.*`；`@erolib/server` 无 ID3 依赖 |
-| 6 | 同步/任务同页 | 导航 `同步 / 任务` → `/jobs`；`JobsPage` 同时展示下载任务与同步记录 |
+| 1 | 前端看不到封面 | `LibraryPage` / `WorkDetailPage` 仅 `IconWave` 占位；`WorkPublic.coverPath` 有字段，无 cover 媒体路由（`app.ts` 仅 `/audio`） |
+| 2 | 简介不完整 | DB/`WorkMetadata.description` 已有；Otobanana 取 `post.text`；Koe-koe `parseDetail` **未抓** description（逆向：`<div class="desc detail"><p>…</p></div>`） |
+| 3 | Koe-koe 标题错误 | 例：真标题 `ビデオ通話で見られながらオナニーしてみた`，入库为站点宣传文案；`parseDetail` 用首个 `<h2>`/`<title>` 易误命中 |
+| 4 | 媒体库无渠道筛选 | `GET /api/works?provider=` 与 `api.works({provider})` 已支持；`LibraryPage` 仅状态筛选 |
+| 5 | 无 ID3 | 仅 `audio.*` + `meta.json` + 可选 `cover.*`；server 无 ID3 依赖 |
+| 6 | 同步/任务同页 | 导航「同步 / 任务」→ `/jobs`；`JobsPage` 混排下载任务与同步记录 |
+| 7 | **Koe-koe 无作品封面、无作者头像** | 逆向：仅性别图标 `/img/female3.png|male3.png|couple3.png`；无 thumbnail/avatar。现 `parseDetail` 误把性别图标当 `coverUrl` |
 
-相关路径：
-
-- Providers: `apps/server/src/providers/{koekoe,otobanana}.ts`
-- Job 落盘: `apps/server/src/jobs/runner.ts`（下载后写 `title`/`description`/`coverRelPath`）
-- API: `apps/server/src/app.ts`
-- UI: `apps/web/src/pages/{LibraryPage,WorkDetailPage,JobsPage}.tsx`, `App.tsx`
-- 逆向: `docs/koe-koe-reverse-engineering.md`（title=`h2`，description=`.desc.detail`）
+相关路径：Providers `apps/server/src/providers/*`；落盘 `jobs/runner.ts`；API `app.ts`；UI `LibraryPage`/`WorkDetailPage`/`JobsPage`/`App.tsx`；逆向 `docs/koe-koe-reverse-engineering.md`、`docs/otobanana_reverse_engineering.md`。
 
 ## Requirements
 
-### R1. 封面可显示
+### R1. 封面可显示（仅真实封面）
 
-- 已下载且存在封面文件时，媒体库卡片与作品详情显示真实封面图
-- 无封面时保留现有占位图
-- 新增封面媒体接口（鉴权与 audio 一致），前端用其渲染 `<img>`
+- **有真实封面的渠道**（如 Otobanana `thumbnail_url` / 用户头像回退）：已下载后列表卡 + 详情显示封面图
+- **Koe-koe**：**不抓、不存、不展示**性别图标当封面；`coverUrl`/`coverPath` 保持空；UI 用统一占位（可带 provider 标识）
+- 无封面：保留占位，不 404 刷屏
+- 新增 cover 媒体接口（仅当本地确有 cover 文件时 200）
 
 ### R2. 全渠道抓取简介
 
-- Koe-koe：从详情页抓取作品简介（`.desc.detail` 等稳定选择器）并入库
-- Otobanana：继续使用 `post.text`；若为空保持 `null`
-- Erovoice：MVP-2，本任务不实现抓取，但类型/落盘路径保持兼容
-- 详情页已有 `work.description` 展示，抓到后应可见
+- **Koe-koe**：解析详情简介并入库
+- **Otobanana**：继续 `post.text`；空则 `null`
+- **Erovoice**：本任务不实现抓取，类型/落盘兼容
+- 详情页已有 description 展示，抓到后可见
 
-### R3. 修复 Koe-koe 标题解析
+### R3. 修复 Koe-koe 标题
 
-- 作品标题必须是详情页的作品标题，不得把站点 slogan / meta 描述当标题
-- 解析优先级应偏向作品级节点（如主内容区 `h2`、`og:title` 等），并覆盖用户报告样例类 HTML
-- 解析结果有单元测试（含「错误命中站点宣传文案」回归）
+- 标题必须是作品标题，禁止站点 slogan / meta 描述
+- 解析优先作品级节点（主内容 `h2`、`og:title` 等），避开已知宣传文案
+- 单元测试覆盖用户报告类回归
 
 ### R4. 媒体库渠道筛选
 
-- 媒体库增加 Provider 筛选（全部 / otobanana / koekoe / erovoice）
-- 与现有标题搜索、状态筛选可组合
-- 走已有 `provider` query，不另造筛选语义
+- 筛选：全部 / otobanana / koekoe / erovoice
+- 与 `q`、`status` 可组合
+- 复用现有 `provider` query
 
-### R5. 音频 ID3 元数据
+### R5. 音频 ID3
 
-下载成功提交到 `/media` 前（或提交后立刻），向音频文件写入至少：
+下载成功后对音频写入至少：
 
-| 字段 | 内容来源 |
-|------|----------|
-| 标题 (TIT2) | `meta.title` |
-| 艺术家/作者 (TPE1) | `meta.authorName` 或 `authorId` |
-| 简介/注释 (COMM) | `meta.description`（可空） |
-| 专辑/来源信息 | Provider 名 + 原始链接 |
-| 封面 (APIC) | 已下载的 cover 文件（可空） |
-| 原始链接 | 稳定详情 URL（见 R5a） |
+| 字段 | 来源 |
+|------|------|
+| 标题 TIT2 | `meta.title` |
+| 艺术家 TPE1 | `authorName` 或 `authorId` |
+| 注释 COMM | `description`（可空） |
+| 专辑/来源 | Provider 名 |
+| 封面 APIC | 已下 **真实** cover（可空；Koe-koe 通常无） |
+| 原始链接 | 稳定详情 URL（R5a） |
+
+优先 **MP3 ID3v2**；非 MP3 尽力或跳过并记 log，不阻断下载成功。
 
 #### R5a. 原始链接
 
-- 由 provider + workId 稳定生成（不依赖瞬时 CDN）：
-  - koekoe: `https://koe-koe.com/detail.php?n={workId}`
-  - otobanana: 官方作品页 URL（按现有逆向约定；若仅有 API id，用可点击的公开页）
-- 写入 ID3（如 `WOAS`/`WXXX` 或 COMM 中的 `source_url=` 兜底）并保留在 `meta.json`
+稳定生成并写入 `meta.json` + ID3：
+
+- koekoe: `https://koe-koe.com/detail.php?n={workId}`
+- otobanana: `https://otobanana.com/general/cast/{workId}`（`/:floor()/cast/:id`）
 
 ### R6. 同步页与任务页分离
 
-- 导航拆为两个入口：例如「同步」与「下载任务」（文案可微调）
-- 同步页：手动触发同步、同步历史 `sync_runs`
-- 任务页：下载队列 `download_jobs` 进度/失败信息
-- 旧 `/jobs` 可重定向到其中一个，避免死链
+- 侧栏两个入口：同步、下载任务
+- 同步页：手动同步 + `sync_runs`
+- 任务页：`download_jobs`
+- 旧 `/jobs` 重定向，避免死链
+
+### R7. 单条刷新元数据（存量）
+
+- 详情页「刷新元数据」
+- 行为：`getWork` 重拉 title/description/author/coverUrl（**Koe-koe 不产生假封面**）；有真实 cover 时可选重下；更新 DB + `meta.json`；若本地音频存在则重写 ID3
+- **默认不重下音频**（除非音频缺失）
+- 仅 `downloaded`（及可选 `failed` 但已有媒体）可用；进行中任务禁用或排队
 
 ## Acceptance Criteria
 
-- [ ] 已下载且有封面的作品：列表卡 + 详情页显示封面图；无封面时占位图
-- [ ] Koe-koe 新下载作品 `description` 非空（站点有简介时）；Otobanana 行为不回退
-- [ ] Koe-koe 标题解析用例：用户类错误（站点宣传文案）不再被当作 title；正确标题入库
-- [ ] 媒体库可按渠道筛选，并与 q/status 组合生效
-- [ ] 新下载音频可用外部工具读出 ID3：标题、作者、简介（若有）、原始链接、封面（若有）
-- [ ] 侧栏有独立「同步」与「下载任务」页面；两页数据互不混在同一主列表
+- [ ] 有真实封面的已下载作品（Otobanana 等）：列表 + 详情显示封面；Koe-koe / 无封面作品稳定占位，不显示站点性别图标当封面
+- [ ] Koe-koe 新下载：站点有简介则 `description` 非空；Otobanana 不回退
+- [ ] Koe-koe 标题：用户类错误（宣传文案）不再当 title；正确标题入库；测试覆盖
+- [ ] 媒体库可按渠道筛选，可与 q/status 组合
+- [ ] 新下载 MP3 可用外部工具读出：标题、作者、简介（若有）、原始链接、封面（若有）
+- [ ] 侧栏独立「同步」「下载任务」；数据不混在同一主列表
+- [ ] 详情页「刷新元数据」可修正单条存量 title/description/封面/ID3，且不强制重下音频
 
 ## Out of Scope
 
-- Erovoice 抓取实现（仍属 MVP-2）
-- 音频转码 / 非 MP3 的复杂标签方案（优先 MP3 ID3v2；其他格式尽力或跳过并记录）
-- 远端写回、双向同步
-- 大规模历史库自动全量重下（除非用户明确要求 backfill）
+- Erovoice 抓取实现
+- 全库批量 backfill 任务
+- 音频转码
+- 远端写回 / 双向同步
+- 非 MP3 全格式标签完备性
+- 将 Koe-koe 性别图标当作作品封面或作者头像下载/展示
+- 为 Koe-koe 伪造 AI/本地生成封面
 
-## Open Questions
+## Decisions
 
-1. **已下载历史数据**：错误标题/缺简介/无 ID3 的存量作品如何处理？
-   - 推荐：提供「重新抓取元数据 / 重试下载」路径修复单条；本任务不做全库自动 backfill 批处理。
+| # | 决策 | 结论 |
+|---|------|------|
+| 1 | 存量修复 | 单条「刷新元数据」，不做全库 backfill |
+| 2 | 原始链接 | provider 规则生成，不依赖瞬时 CDN |
+| 3 | ID3 范围 | 优先 MP3；其他格式 best-effort |
+| 4 | Otobanana 公开页 | `/general/cast/{id}` |
+| 5 | Koe-koe 封面 | 站点无真实封面/头像；**不**用性别图标冒充；UI 占位 |
 
 ## Notes
 
-- 任务目录：`.trellis/tasks/07-15-media-metadata-ui-fixes/`
-- 复杂度：跨 provider 解析、API、前端路由与二进制标签 → 需要 `design.md` + `implement.md`
-- 状态应保持 **planning**，待产物审完再 `task.py start` 实现
+- 任务：`.trellis/tasks/07-15-media-metadata-ui-fixes/`
+- 需 `design.md` + `implement.md`；审完再实现

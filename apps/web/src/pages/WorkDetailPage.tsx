@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { WorkPublic } from "@erolib/shared";
 import { api } from "../api";
-import { IconBack, IconRefresh, IconWave } from "../components/Icons";
+import { WorkCover } from "../components/WorkCover";
+import { IconBack, IconRefresh } from "../components/Icons";
 
 const STATUS_LABEL: Record<string, string> = {
   downloaded: "已下载",
@@ -18,6 +19,7 @@ export function WorkDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   async function load(): Promise<void> {
     try {
@@ -57,6 +59,8 @@ export function WorkDetailPage() {
     );
   }
 
+  const busy = work.status === "queued" || work.status === "downloading";
+
   return (
     <div className="page">
       <Link className="back-link" to="/">
@@ -66,9 +70,14 @@ export function WorkDetailPage() {
 
       <section className="card">
         <div className="detail-hero">
-          <div className="detail-cover" aria-hidden>
-            <IconWave />
-          </div>
+          <WorkCover
+            provider={work.provider}
+            workId={work.workId}
+            title={work.title}
+            authorName={work.authorName}
+            coverPath={work.coverPath}
+            size="detail"
+          />
           <div>
             <p className="page-kicker">{work.provider}</p>
             <h1 className="detail-title">{work.title}</h1>
@@ -103,6 +112,16 @@ export function WorkDetailPage() {
                 <dt>Provider</dt>
                 <dd>{work.provider}</dd>
               </div>
+              {work.sourceUrl ? (
+                <div>
+                  <dt>原始链接</dt>
+                  <dd>
+                    <a href={work.sourceUrl} target="_blank" rel="noreferrer">
+                      打开源站
+                    </a>
+                  </dd>
+                </div>
+              ) : null}
             </dl>
             {work.description ? <p className="desc">{work.description}</p> : null}
           </div>
@@ -133,11 +152,43 @@ export function WorkDetailPage() {
           </div>
         ) : (
           <p className="muted" style={{ marginTop: "1rem" }}>
-            仅下载完成后可播放。当前状态：{STATUS_LABEL[work.status] ?? work.status}
+            仅下载完成后可播放。当前状态：
+            {STATUS_LABEL[work.status] ?? work.status}
           </p>
         )}
 
         <div className="form-actions" style={{ marginTop: "1rem" }}>
+          <button
+            type="button"
+            className="secondary"
+            disabled={refreshing || busy}
+            onClick={() => {
+              setRefreshing(true);
+              setMsg(null);
+              setError(null);
+              void api
+                .refreshMetadata(work.provider, work.workId)
+                .then((r) => {
+                  setMsg(
+                    r.warning
+                      ? `元数据已刷新（${r.warning}）`
+                      : "元数据已刷新",
+                  );
+                  return load();
+                })
+                .catch((e: unknown) =>
+                  setError(e instanceof Error ? e.message : String(e)),
+                )
+                .finally(() => setRefreshing(false));
+            }}
+          >
+            {refreshing ? (
+              <span className="spinner" />
+            ) : (
+              <IconRefresh width={16} height={16} />
+            )}
+            刷新元数据
+          </button>
           <button
             type="button"
             className="secondary"
@@ -158,7 +209,11 @@ export function WorkDetailPage() {
                 .finally(() => setRetrying(false));
             }}
           >
-            {retrying ? <span className="spinner" /> : <IconRefresh width={16} height={16} />}
+            {retrying ? (
+              <span className="spinner" />
+            ) : (
+              <IconRefresh width={16} height={16} />
+            )}
             重试下载
           </button>
         </div>
