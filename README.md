@@ -1,6 +1,6 @@
 # Erolib — 自托管音声媒体备份库
 
-Docker 自托管：备份 Otobanana / Koe-koe 收藏到本地，浏览器浏览与播放。Erovoice 为 MVP-2 stub。
+Docker 自托管：备份 Otobanana / Koe-koe / Erovoice 收藏到本地，浏览器浏览与播放。
 
 ## 快速开始（Docker）
 
@@ -30,6 +30,8 @@ pnpm dev:server   # :8080
 pnpm dev:web      # :5173 proxy /api → 8080
 ```
 
+Erovoice 下载需要本机 **ffmpeg** 在 `PATH`（或设置 `FFMPEG_PATH`）。Docker 镜像已内置。
+
 构建与测试：
 
 ```bash
@@ -42,10 +44,12 @@ pnpm typecheck
 
 ## 使用流程
 
-1. **Providers** 页配置 Otobanana / Koe-koe（账密或 Cookie/JWT）
+1. **Providers** 页配置 Otobanana / Koe-koe / Erovoice（账密或 Cookie）
 2. **测试** 登录 → **同步 / 任务** 点「立即同步」
 3. 下载完成后在 **媒体库** 播放（仅 `downloaded` 可播）
 4. 远端取消收藏不会删本地文件，仅标记「远端收藏=否」
+
+Erovoice 音频来自站点 HLS（约 75kbps AAC），服务端解密后转码为 `audio.mp3`。
 
 ## 结构
 

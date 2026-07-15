@@ -299,7 +299,6 @@ export function createJobRunner(
         .where(eq(providerAccounts.enabled, true));
       for (const account of accounts) {
         if (provider && account.provider !== provider) continue;
-        if (account.provider === "erovoice") continue;
         await syncOne(account);
       }
     } finally {

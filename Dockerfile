@@ -29,7 +29,7 @@ ENV NODE_ENV=production \
     CACHE_DIR=/cache \
     WEB_DIST_DIR=/app/apps/web/dist
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates \
+  && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
   && rm -rf /var/lib/apt/lists/* \
   && corepack enable && corepack prepare pnpm@10.30.1 --activate
 
