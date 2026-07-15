@@ -1,0 +1,14 @@
+node_modules
+dist
+data
+media
+cache
+*.db
+*.db-*
+.env
+.env.*
+!.env.example
+.DS_Store
+*.log
+coverage
+.turbo

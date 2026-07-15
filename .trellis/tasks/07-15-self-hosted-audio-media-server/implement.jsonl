@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/otobanana_reverse_engineering.md", "reason": "Otobanana provider reverse facts"}
+{"file": "docs/koe-koe-reverse-engineering.md", "reason": "Koe-koe provider reverse facts"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Backend layout guideline placeholder"}
+{"file": "docs/erovoice-ch.com-逆向分析报告.md", "reason": "Erovoice interface reserved for MVP-2"}
