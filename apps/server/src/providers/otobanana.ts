@@ -226,6 +226,7 @@ function castToMeta(
     durationSeconds: parseDuration(cast.duration_time),
     audioUrl,
     coverUrl: cast.thumbnail_url ?? post?.user?.avatar_url ?? null,
+    sourceUrl: `https://otobanana.com/general/cast/${post?.id ?? cast.post_ptr_id ?? workId}`,
     createdAt: post?.created_at ?? null,
   };
 }

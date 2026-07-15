@@ -1,7 +1,7 @@
 {
-  "id": "media-metadata-ui-fixes",
-  "name": "media-metadata-ui-fixes",
-  "title": "媒体库元数据与UI修复",
+  "id": "media-library-view-modes",
+  "name": "media-library-view-modes",
+  "title": "媒体库视图模式：小尺寸/标准/列表",
   "description": "",
   "status": "in_progress",
   "dev_type": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Planning in progress: media metadata + UI fixes from user report.",
+  "notes": "",
   "meta": {}
 }

@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { copyFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import type {
   ProviderAuth,
@@ -20,6 +21,7 @@ import {
   type ProviderAccountRow,
   type WorkRow,
 } from "../db/schema.js";
+import { tagAudioFile } from "../media/id3.js";
 import { getProvider } from "../providers/index.js";
 import {
   cacheJobDir,
@@ -27,15 +29,21 @@ import {
   commitCacheToMedia,
   ensureDir,
   mediaWorkDir,
+  pathExists,
   resolveAuthorId,
   writeJsonAtomic,
 } from "../storage/paths.js";
+import { fetchToFile } from "../providers/download-utils.js";
 
 export interface JobRunner {
   start(): void;
   stop(): void;
   triggerSync(provider?: ProviderId): Promise<void>;
   kickDownloads(): void;
+  refreshWorkMetadata(
+    provider: ProviderId,
+    workId: string,
+  ): Promise<{ ok: true; warning?: string }>;
 }
 
 interface CredentialPayload {
@@ -396,6 +404,14 @@ export function createJobRunner(
       const coverName = result.coverPath
         ? path.basename(result.coverPath)
         : null;
+
+      // Soft-fail ID3: tagging must not block a successful download.
+      await tagAudioFile({
+        audioPath: result.audioPath,
+        meta: result.meta ?? meta,
+        coverPath: result.coverPath ?? null,
+      });
+
       await commitCacheToMedia({
         cacheDir,
         mediaDir: media.dir,
@@ -507,6 +523,142 @@ export function createJobRunner(
     kickDownloads();
   }
 
+  async function renameSafeLocal(src: string, dest: string): Promise<void> {
+    try {
+      await rename(src, dest);
+    } catch {
+      await copyFile(src, dest);
+      await rm(src, { force: true });
+    }
+  }
+
+  async function refreshWorkMetadata(
+    providerId: ProviderId,
+    workId: string,
+  ): Promise<{ ok: true; warning?: string }> {
+    const [work] = await db
+      .select()
+      .from(works)
+      .where(and(eq(works.provider, providerId), eq(works.workId, workId)))
+      .limit(1);
+    if (!work) throw new Error("Work not found");
+
+    const active = await db
+      .select({ id: downloadJobs.id })
+      .from(downloadJobs)
+      .where(
+        and(
+          eq(downloadJobs.workDbId, work.id),
+          inArray(downloadJobs.state, ["queued", "running"]),
+        ),
+      )
+      .limit(1);
+    if (active.length > 0) {
+      throw new Error("下载进行中，请稍后再刷新元数据");
+    }
+
+    const [account] = await db
+      .select()
+      .from(providerAccounts)
+      .where(eq(providerAccounts.provider, providerId))
+      .limit(1);
+    if (!account) throw new Error("Provider account missing");
+
+    const provider = getProvider(providerId);
+    const session = await ensureSession(account);
+    const meta = await provider.getWork(session, work.workId);
+
+    const authorId = resolveAuthorId(meta.authorId ?? work.authorId);
+    const media = mediaWorkDir(
+      config.mediaDir,
+      providerId,
+      authorId,
+      work.workId,
+    );
+    await ensureDir(media.dir);
+
+    let coverRelPath: string | null = work.coverRelPath;
+    let coverAbs: string | null = null;
+
+    if (meta.coverUrl) {
+      try {
+        const coverTmp = path.join(media.dir, "cover.refresh");
+        const cover = await fetchToFile({
+          url: meta.coverUrl,
+          destPath: coverTmp,
+        });
+        const coverExt = cover.ext === "bin" ? "jpg" : cover.ext;
+        const coverFinal = media.cover(coverExt);
+        try {
+          await renameSafeLocal(cover.path, coverFinal);
+        } catch {
+          // leave missing cover
+        }
+        if (await pathExists(coverFinal)) {
+          coverAbs = coverFinal;
+          coverRelPath = path.relative(config.mediaDir, coverFinal);
+        }
+      } catch {
+        // keep previous cover
+      }
+    } else if (providerId === "koekoe") {
+      // Drop any previously-mis-saved gender-icon cover.
+      coverRelPath = null;
+    } else if (work.coverRelPath) {
+      const existing = path.join(config.mediaDir, work.coverRelPath);
+      if (await pathExists(existing)) coverAbs = existing;
+    }
+
+    await writeJsonAtomic(media.metaJson, {
+      ...meta,
+      refreshedAt: new Date().toISOString(),
+      downloadedAt: work.downloadedAt,
+    });
+
+    let warning: string | undefined;
+    if (work.status === "downloaded" && work.audioExt) {
+      const audioPath = media.audio(work.audioExt);
+      if (await pathExists(audioPath)) {
+        const tag = await tagAudioFile({
+          audioPath,
+          meta,
+          coverPath: coverAbs,
+        });
+        if (!tag.tagged && tag.reason) {
+          warning = `ID3: ${tag.reason}`;
+        }
+      }
+    }
+
+    await db
+      .update(works)
+      .set({
+        title: meta.title,
+        description: meta.description ?? null,
+        authorId,
+        authorName: meta.authorName ?? work.authorName,
+        durationSeconds: meta.durationSeconds ?? null,
+        coverRelPath,
+        mediaRelDir: path.relative(config.mediaDir, media.dir),
+        metaJson: JSON.stringify(meta),
+        updatedAt: nowSql(),
+        error: null,
+      })
+      .where(eq(works.id, work.id));
+
+    await db
+      .update(providerAccounts)
+      .set({
+        sessionBlob: JSON.stringify(session),
+        status: "ok",
+        statusMessage: null,
+        updatedAt: nowSql(),
+      })
+      .where(eq(providerAccounts.id, account.id));
+
+    return warning ? { ok: true, warning } : { ok: true };
+  }
+
   return {
     start() {
       stopped = false;
@@ -515,12 +667,11 @@ export function createJobRunner(
       timer = setInterval(() => {
         void runSync();
       }, ms);
-      // don't unref in docker so process stays meaningful; fine either way
     },
     stop() {
       stopped = true;
-      if (timer) clearInterval(timer);
-      if (tickTimer) clearTimeout(tickTimer);
+      clearInterval(timer ?? undefined);
+      clearTimeout(tickTimer ?? undefined);
       timer = null;
       tickTimer = null;
     },
@@ -528,6 +679,7 @@ export function createJobRunner(
       await runSync(provider);
     },
     kickDownloads,
+    refreshWorkMetadata,
   };
 }
 

@@ -119,3 +119,41 @@ export function IconRefresh(props: IconProps) {
     </svg>
   );
 }
+
+export function IconViewSmall(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3.5" y="3.5" width="4.5" height="4.5" rx="0.8" />
+      <rect x="9.75" y="3.5" width="4.5" height="4.5" rx="0.8" />
+      <rect x="16" y="3.5" width="4.5" height="4.5" rx="0.8" />
+      <rect x="3.5" y="9.75" width="4.5" height="4.5" rx="0.8" />
+      <rect x="9.75" y="9.75" width="4.5" height="4.5" rx="0.8" />
+      <rect x="16" y="9.75" width="4.5" height="4.5" rx="0.8" />
+      <rect x="3.5" y="16" width="4.5" height="4.5" rx="0.8" />
+      <rect x="9.75" y="16" width="4.5" height="4.5" rx="0.8" />
+      <rect x="16" y="16" width="4.5" height="4.5" rx="0.8" />
+    </svg>
+  );
+}
+
+export function IconViewStandard(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1" />
+      <rect x="13" y="3.5" width="7.5" height="7.5" rx="1" />
+      <rect x="3.5" y="13" width="7.5" height="7.5" rx="1" />
+      <rect x="13" y="13" width="7.5" height="7.5" rx="1" />
+    </svg>
+  );
+}
+
+export function IconViewList(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="3.5" y="4.5" width="3" height="3" rx="0.6" />
+      <rect x="3.5" y="10.5" width="3" height="3" rx="0.6" />
+      <rect x="3.5" y="16.5" width="3" height="3" rx="0.6" />
+      <path d="M9 6h11.5M9 12h11.5M9 18h11.5" />
+    </svg>
+  );
+}

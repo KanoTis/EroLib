@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Server quality bar for parser/ID3/API changes"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify soft-fail ID3 and refresh error paths"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "UI quality for cover, filter, page split"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer acceptance: cover path, provider filter, metadata fields"}
+{"file": ".trellis/tasks/07-15-media-metadata-ui-fixes/prd.md", "reason": "Acceptance criteria mapping"}
+{"file": ".trellis/tasks/07-15-media-metadata-ui-fixes/design.md", "reason": "Contract and trade-off compliance"}

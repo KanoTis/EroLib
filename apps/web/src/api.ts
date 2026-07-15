@@ -97,7 +97,14 @@ export const api = {
     request<{ ok: boolean }>(`/api/works/${provider}/${workId}/retry`, {
       method: "POST",
     }),
+  refreshMetadata: (provider: string, workId: string) =>
+    request<{ ok: boolean; warning?: string }>(
+      `/api/works/${provider}/${workId}/refresh-metadata`,
+      { method: "POST" },
+    ),
   jobs: () => request<DownloadJobPublic[]>("/api/jobs"),
   audioUrl: (provider: string, workId: string) =>
     `/api/works/${provider}/${workId}/audio`,
+  coverUrl: (provider: string, workId: string) =>
+    `/api/works/${provider}/${workId}/cover`,
 };

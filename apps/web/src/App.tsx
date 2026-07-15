@@ -7,6 +7,7 @@ import {
   IconLogout,
   IconMenu,
   IconProviders,
+  IconRefresh,
   IconSettings,
   IconWave,
 } from "./components/Icons";
@@ -15,6 +16,7 @@ import { LibraryPage } from "./pages/LibraryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SyncPage } from "./pages/SyncPage";
 import { WorkDetailPage } from "./pages/WorkDetailPage";
 
 export function App() {
@@ -93,8 +95,11 @@ export function App() {
           <NavLink to="/providers" icon={<IconProviders />}>
             Providers
           </NavLink>
+          <NavLink to="/sync" icon={<IconRefresh />}>
+            同步
+          </NavLink>
           <NavLink to="/jobs" icon={<IconJobs />}>
-            同步 / 任务
+            下载任务
           </NavLink>
           <NavLink to="/settings" icon={<IconSettings />}>
             设置
@@ -139,6 +144,7 @@ export function App() {
             <Route path="/" element={<LibraryPage />} />
             <Route path="/works/:provider/:workId" element={<WorkDetailPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
+            <Route path="/sync" element={<SyncPage />} />
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
