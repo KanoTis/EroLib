@@ -67,9 +67,7 @@ export function ProvidersPage() {
             >
               <option value="otobanana">Otobanana</option>
               <option value="koekoe">Koe-koe</option>
-              <option value="erovoice" disabled>
-                Erovoice（MVP-2）
-              </option>
+              <option value="erovoice">Erovoice</option>
             </select>
           </label>
           <label className="field">

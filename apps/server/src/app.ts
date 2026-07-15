@@ -287,7 +287,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     return c.json(
       PROVIDER_IDS.map((id) => ({
         id,
-        implemented: id !== "erovoice",
+        implemented: true,
       })),
     );
   });
@@ -297,9 +297,6 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     const parsed = ProviderBody.safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid body" }, 400);
     const data = parsed.data;
-    if (data.provider === "erovoice") {
-      return c.json({ error: "Erovoice is MVP-2 only (stub)" }, 400);
-    }
     const payload: CredentialPayload = {
       mode: data.authMode,
       username: data.username,

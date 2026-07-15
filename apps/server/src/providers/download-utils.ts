@@ -19,14 +19,23 @@ export function extFromUrlOrType(
   contentType?: string | null,
 ): string {
   const lower = url.toLowerCase();
-  if (lower.includes(".mp3") || contentType?.includes("mpeg")) return "mp3";
-  if (lower.includes(".m4a") || contentType?.includes("mp4")) return "m4a";
-  if (lower.includes(".ogg")) return "ogg";
-  if (lower.includes(".wav")) return "wav";
-  if (lower.includes(".aac")) return "aac";
-  if (contentType?.includes("jpeg") || lower.includes(".jpg")) return "jpg";
-  if (contentType?.includes("png") || lower.includes(".png")) return "png";
-  if (contentType?.includes("webp")) return "webp";
+  const type = contentType?.toLowerCase() ?? "";
+  if (lower.includes(".mp3") || type.includes("mpeg") || type.includes("mp3"))
+    return "mp3";
+  if (lower.includes(".m4a") || type.includes("mp4") || type.includes("m4a"))
+    return "m4a";
+  if (lower.includes(".ogg") || type.includes("ogg")) return "ogg";
+  if (lower.includes(".wav") || type.includes("wav")) return "wav";
+  if (lower.includes(".aac") || type.includes("aac")) return "aac";
+  if (
+    lower.includes(".jpg") ||
+    lower.includes(".jpeg") ||
+    type.includes("jpeg")
+  )
+    return "jpg";
+  if (lower.includes(".png") || type.includes("png")) return "png";
+  if (lower.includes(".webp") || type.includes("webp")) return "webp";
+  if (lower.includes(".gif") || type.includes("gif")) return "gif";
   return "bin";
 }
 
