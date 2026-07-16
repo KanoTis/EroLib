@@ -38,3 +38,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: Erovoice MVP-2 Provider
+
+**Date**: 2026-07-16
+**Task**: Erovoice MVP-2 Provider
+**Branch**: `master`
+
+### Summary
+
+Implemented Erovoice Provider: WP login, SSR bookmark sync, HLS/AES download to mp3, original cover URLs, unlocked product gates, Docker ffmpeg; researched that HTML parse cannot fully be replaced by APIs.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1e28001` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
