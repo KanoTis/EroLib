@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   IconClose,
   IconPause,
@@ -35,18 +36,50 @@ export function PlayerBar() {
     stop,
   } = usePlayer();
 
+  // Local preview while dragging; commit seek only on release.
+  const [scrubTime, setScrubTime] = useState<number | null>(null);
+  const scrubbing = scrubTime != null;
+
+  useEffect(() => {
+    setScrubTime(null);
+  }, [track?.id]);
+
   if (!track) return null;
 
   const isPlaying = status === "playing" || status === "loading";
   const canSeek = Number.isFinite(duration) && duration > 0;
   const max = canSeek ? duration : 0;
-  const value = canSeek ? Math.min(currentTime, max) : 0;
+  const displayTime = scrubbing
+    ? Math.min(scrubTime, max)
+    : canSeek
+      ? Math.min(currentTime, max)
+      : 0;
 
   let statusText: string | null = null;
   if (error || status === "error") {
     statusText = error ?? "无法播放";
-  } else if (status === "loading") {
+  } else if (status === "loading" && !scrubbing) {
+    // Never flash loading while the user is dragging the seek bar.
     statusText = "加载中…";
+  }
+
+  function beginScrub(): void {
+    if (!canSeek) return;
+    setScrubTime(currentTime);
+  }
+
+  function previewScrub(time: number): void {
+    if (!canSeek) return;
+    setScrubTime(time);
+  }
+
+  function commitScrub(time: number): void {
+    if (!canSeek) {
+      setScrubTime(null);
+      return;
+    }
+    setScrubTime(null);
+    seek(time);
   }
 
   return (
@@ -115,7 +148,7 @@ export function PlayerBar() {
           </button>
 
           <span className="player-time" aria-hidden>
-            {formatTime(currentTime)}
+            {formatTime(displayTime)}
           </span>
 
           <label className="player-seek-label">
@@ -126,13 +159,43 @@ export function PlayerBar() {
               min={0}
               max={max || 0}
               step={0.1}
-              value={value}
+              value={displayTime}
               disabled={!canSeek}
               aria-valuemin={0}
               aria-valuemax={max || 0}
-              aria-valuenow={value}
-              aria-valuetext={formatTime(value)}
-              onChange={(e) => seek(Number(e.target.value))}
+              aria-valuenow={displayTime}
+              aria-valuetext={formatTime(displayTime)}
+              onPointerDown={beginScrub}
+              onMouseDown={beginScrub}
+              onTouchStart={beginScrub}
+              onChange={(e) => previewScrub(Number(e.target.value))}
+              onPointerUp={(e) =>
+                commitScrub(Number((e.target as HTMLInputElement).value))
+              }
+              onMouseUp={(e) =>
+                commitScrub(Number((e.target as HTMLInputElement).value))
+              }
+              onTouchEnd={(e) =>
+                commitScrub(Number((e.target as HTMLInputElement).value))
+              }
+              onPointerCancel={() => setScrubTime(null)}
+              onBlur={(e) => {
+                if (scrubTime == null) return;
+                commitScrub(Number(e.currentTarget.value));
+              }}
+              onKeyDown={beginScrub}
+              onKeyUp={(e) => {
+                if (
+                  e.key === "ArrowLeft" ||
+                  e.key === "ArrowRight" ||
+                  e.key === "Home" ||
+                  e.key === "End" ||
+                  e.key === "PageUp" ||
+                  e.key === "PageDown"
+                ) {
+                  commitScrub(Number((e.target as HTMLInputElement).value));
+                }
+              }}
             />
           </label>
 
@@ -164,7 +227,7 @@ export function PlayerBar() {
                 value={muted ? 0 : volume}
                 aria-valuemin={0}
                 aria-valuemax={1}
-                aria-valuenow={muted ? 0 : volume}
+                aria-valuenow={muted || volume === 0 ? 0 : volume}
                 onChange={(e) => {
                   const v = Number(e.target.value);
                   setVolume(v);
