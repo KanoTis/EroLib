@@ -341,16 +341,20 @@ export function createLivePoller(
       rerun = true;
       return inFlight;
     }
+    // Keep inFlight === the same Promise we return. `.finally()` returns a
+    // *new* Promise; assigning that made `inFlight === run` always false so
+    // inFlight never cleared and later pollNow() only set rerun and returned.
     const run = (async () => {
       do {
         rerun = false;
         await pollOnce();
       } while (rerun);
     })();
-    inFlight = run.finally(() => {
+    inFlight = run;
+    void run.finally(() => {
       if (inFlight === run) inFlight = null;
     });
-    return inFlight;
+    return run;
   }
 
   return {

@@ -305,15 +305,17 @@ export function LivePage() {
                       </span>
                     </td>
                     <td className="muted small">
-                      {s.lastRoomId ? (
+                      {s.lastOnairAt || s.lastRoomId ? (
                         <>
                           <div>{s.lastOnairAt || "—"}</div>
-                          <div title={s.lastRoomId}>
-                            {s.lastRoomId.slice(0, 28)}…
-                          </div>
+                          {s.lastRoomId ? (
+                            <div title={s.lastRoomId}>
+                              {s.lastRoomId.slice(0, 28)}…
+                            </div>
+                          ) : null}
                         </>
                       ) : (
-                        s.lastCheckAt || "—"
+                        "—"
                       )}
                     </td>
                     <td className="muted small">{s.lastError || "—"}</td>
