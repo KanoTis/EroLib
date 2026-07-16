@@ -12,7 +12,11 @@ import {
   sanitizePathSegment,
   UNKNOWN_AUTHOR,
 } from "../src/storage/paths.js";
-import { parseBookmarkIds, parseDetail } from "../src/providers/koekoe.js";
+import {
+  parseBookmarkIds,
+  parseDetail,
+  parseNextMypagePage,
+} from "../src/providers/koekoe.js";
 
 describe("credentials crypto", () => {
   it("roundtrips JSON payloads", () => {
@@ -61,6 +65,24 @@ describe("koekoe parsers", () => {
       <a href="detail.php?n=761964">dup</a>
     `;
     assert.deepEqual(parseBookmarkIds(html), ["761964", "100"]);
+  });
+
+  it("parses mypage next page from prev/next-only pager", () => {
+    const mid = `
+      <a href="mypage.php">prev</a>
+      <a href="mypage.php?p=3">next</a>
+      <a href="detail.php?n=1">x</a>
+    `;
+    assert.equal(parseNextMypagePage(mid), 3);
+
+    const last = `
+      <a href="mypage.php?p=3">prev</a>
+      <a href="detail.php?n=1">x</a>
+    `;
+    assert.equal(parseNextMypagePage(last), null);
+
+    const first = `<a href="mypage.php?p=2">next</a>`;
+    assert.equal(parseNextMypagePage(first), 2);
   });
 
   it("parses detail page", () => {
