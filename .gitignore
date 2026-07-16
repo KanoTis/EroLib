@@ -3,6 +3,9 @@ dist
 /data/
 /media/
 /cache/
+apps/server/data/
+apps/server/media/
+apps/server/cache/
 *.db
 *.db-*
 .env
