@@ -112,18 +112,40 @@ const TITLE_NOISE = [
   /^コエコエ/,
 ];
 
-function stripTags(html: string): string {
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<[^>]+>/g, " ")
+function decodeEntities(text: string): string {
+  return text
     .replace(/&nbsp;/gi, " ")
     .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">")
     .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
+    .replace(/&#39;/gi, "'");
+}
+
+function stripTags(html: string): string {
+  return decodeEntities(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<[^>]+>/g, " "),
+  )
     .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Keep hard line breaks from <br>/<p>; collapse other whitespace. */
+function stripTagsPreserveNewlines(html: string): string {
+  return decodeEntities(
+    html
+      .replace(/<script[\s\S]*?<\/script>/gi, " ")
+      .replace(/<style[\s\S]*?<\/style>/gi, " ")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/p>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/[^\S\n]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
 
@@ -172,7 +194,14 @@ function pickTitle(html: string, workId: string): string {
   return workId;
 }
 
-function pickDescription(html: string): string | undefined {
+function isNoiseDescription(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  if (t.length > 2000) return true;
+  return TITLE_NOISE.some((re) => re.test(t));
+}
+
+function findDescDetailBlock(html: string): string | undefined {
   const detail =
     /<div[^>]*class=["'][^"']*desc[^"']*detail[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(
       html,
@@ -180,19 +209,84 @@ function pickDescription(html: string): string | undefined {
     /<div[^>]*class=["'][^"']*detail[^"']*desc[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(
       html,
     );
-  if (detail?.[1]) {
-    const text = stripTags(detail[1]);
-    if (text && !isNoiseTitle(text)) return text;
-  }
-  const desc =
-    /<div[^>]*class=["'][^"']*\bdesc\b[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(
-      html,
+  return detail?.[1];
+}
+
+/**
+ * Post body only: first content <p> inside div.desc.detail,
+ * without author/trip/meta/bookmark chrome.
+ */
+function pickDescription(html: string): string | undefined {
+  const block = findDescDetailBlock(html);
+  if (!block) return undefined;
+
+  const pRe = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = pRe.exec(block)) !== null) {
+    const attrs = m[1] ?? "";
+    if (/\bclass=["'][^"']*\b(meta|b_btn)\b/i.test(attrs)) continue;
+
+    let inner = m[2] ?? "";
+    // Drop author search link / bare user_name span
+    inner = inner.replace(/<a\b[^>]*>[\s\S]*?<\/a>/i, "");
+    inner = inner.replace(
+      /<span[^>]*class=["'][^"']*user_name[^"']*["'][^>]*>[\s\S]*?<\/span>/i,
+      "",
     );
-  if (desc?.[1]) {
-    const text = stripTags(desc[1]);
-    if (text && !isNoiseTitle(text) && text.length < 2000) return text;
+
+    let text = stripTagsPreserveNewlines(inner);
+    // Leading trip / ナンネット ID then ":" separator left after author strip
+    text = text
+      .replace(/^(◆[^\s:：]+|◇ID_\d+)\s*/u, "")
+      .replace(/^[:：]\s*/u, "")
+      .trim();
+
+    if (!text || isNoiseDescription(text)) continue;
+    return text;
   }
   return undefined;
+}
+
+const AUTHOR_IDENTITY_RE =
+  /<span[^>]*class=["'][^"']*user_name[^"']*["'][^>]*>([^<]+)<\/span>\s*(?:<\/a>)?\s*(◆[^\s<:：]+|◇ID_\d+)?/i;
+
+function pickAuthor(html: string): {
+  authorName?: string;
+  authorId: string | null;
+  trip?: string;
+  nanId?: string;
+} {
+  const scopes: string[] = [];
+  const detail = findDescDetailBlock(html);
+  if (detail) scopes.push(detail);
+  // Prefer main voice block over sidebar "注目の音声"
+  const voiceIdx = html.search(/id=["']voice["']|id=["']text["']/i);
+  if (voiceIdx >= 0) {
+    scopes.push(html.slice(voiceIdx, voiceIdx + 4000));
+  }
+  scopes.push(html);
+
+  for (const scope of scopes) {
+    const m = AUTHOR_IDENTITY_RE.exec(scope);
+    if (!m?.[1]) continue;
+    const base = decodeURIComponent(stripTags(m[1])).trim();
+    if (!base) continue;
+    const marker = m[2]?.trim();
+    let trip: string | undefined;
+    let nanId: string | undefined;
+    if (marker?.startsWith("◆")) trip = marker.slice(1);
+    else if (marker?.startsWith("◇")) nanId = marker.slice(1); // ID_xxxxx
+    const full = marker ? `${base}${marker}` : base;
+    return { authorName: full, authorId: full, trip, nanId };
+  }
+
+  // Fallback: search.php?word= (base name only, no trip)
+  const authorLink = /search\.php\?word=([^&"']+)/i.exec(html);
+  if (authorLink?.[1]) {
+    const base = decodeURIComponent(authorLink[1]).trim();
+    if (base) return { authorName: base, authorId: base };
+  }
+  return { authorId: null };
 }
 
 export function parseDetail(html: string, workId: string): WorkMetadata {
@@ -216,12 +310,9 @@ export function parseDetail(html: string, workId: string): WorkMetadata {
     if (idOnly?.[1]) audioUrl = audioUrlForId(idOnly[1]);
   }
 
-  const authorMatch =
-    /user_name[^>]*>([^<]+)</i.exec(html) ??
-    /search\.php\?word=([^&"']+)[^>]*>\s*<span class="user_name">/i.exec(html);
-  const authorName = authorMatch?.[1]
-    ? decodeURIComponent(authorMatch[1]).trim()
-    : undefined;
+  const author = pickAuthor(html);
+  const authorName = author.authorName;
+  const authorId = author.authorId;
 
   const durationMatch =
     /audioTime[^>]*>([^<]+)</i.exec(html) ??
@@ -242,15 +333,12 @@ export function parseDetail(html: string, workId: string): WorkMetadata {
   const iconMatch = /src=["']\/img\/(female|male|couple)[^"']*["']/i.exec(html);
   if (iconMatch?.[1]) gender = iconMatch[1].toLowerCase();
 
-  let authorId: string | null = null;
-  const authorLink = /search\.php\?word=([^&"']+)/i.exec(html);
-  if (authorLink?.[1]) {
-    authorId = decodeURIComponent(authorLink[1]);
-  } else if (authorName) {
-    authorId = authorName;
-  }
-
   const description = pickDescription(html);
+
+  const extra: Record<string, unknown> = {};
+  if (gender) extra.gender = gender;
+  if (author.trip) extra.trip = author.trip;
+  if (author.nanId) extra.nanId = author.nanId;
 
   return {
     provider: "koekoe",
@@ -263,7 +351,7 @@ export function parseDetail(html: string, workId: string): WorkMetadata {
     audioUrl,
     coverUrl: null,
     sourceUrl: detailUrl(workId),
-    extra: gender ? { gender } : {},
+    extra,
   };
 }
 
