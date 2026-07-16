@@ -104,3 +104,37 @@ Implemented Otobanana live discovery/polling/Playwright WAV recording, followee 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: Erovoice MVP-2 provider and cover fixes
+
+**Date**: 2026-07-16
+**Task**: Erovoice MVP-2 provider and cover fixes
+**Branch**: `master`
+
+### Summary
+
+实现 Erovoice Provider（登录/收藏 SSR/HLS→mp3），修复封面误选主站耳机图标：接受 erovoice-ch.com 原图并拒绝 site chrome。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1e28001` | (see git log) |
+| `13a3f80` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

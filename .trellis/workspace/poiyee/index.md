@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 3
+- **Total Sessions**: 4
 - **Last Active**: 2026-07-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~106 | Active |
+| `journal-1.md` | ~140 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 4 | 2026-07-16 | Erovoice MVP-2 provider and cover fixes | `1e28001`, `13a3f80` | `master` |
 | 3 | 2026-07-16 | Otobanana live auto-record and media library | `5bda307` | `master` |
 | 2 | 2026-07-16 | Erovoice MVP-2 Provider | `1e28001` | `master` |
 | 1 | 2026-07-15 | 媒体库视图模式：小尺寸/标准/列表 | `b24809a` | `master` |
