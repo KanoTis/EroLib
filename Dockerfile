@@ -28,6 +28,9 @@ ENV NODE_ENV=production \
     MEDIA_DIR=/media \
     CACHE_DIR=/cache \
     WEB_DIST_DIR=/app/apps/web/dist
+LABEL org.opencontainers.image.source=https://github.com/KanoTis/EroLib \
+      org.opencontainers.image.description="Self-hosted audio media backup server" \
+      org.opencontainers.image.licenses=MIT
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
   && rm -rf /var/lib/apt/lists/* \
