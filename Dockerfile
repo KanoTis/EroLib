@@ -7,8 +7,11 @@ RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
 FROM base AS build
 # .dockerignore keeps context small and excludes host node_modules/dist
 COPY . .
-RUN pnpm install --frozen-lockfile \
+# Stale composite tsbuildinfo (if ever present) must not skip declaration emit
+RUN find . -name '*.tsbuildinfo' -delete \
+  && pnpm install --frozen-lockfile \
   && pnpm --filter @erolib/shared build \
+  && test -f packages/shared/dist/index.d.ts \
   && pnpm --filter @erolib/web build \
   && pnpm --filter @erolib/server build
 
