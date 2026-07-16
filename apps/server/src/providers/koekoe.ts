@@ -267,15 +267,24 @@ export function parseDetail(html: string, workId: string): WorkMetadata {
   };
 }
 
-function parsePaginationMax(html: string): number {
-  let max = 1;
-  const re = /[?&]p=(\d+)/g;
+/** Next mypage page number from prev/next-only pager (`null` if last page). */
+export function parseNextMypagePage(html: string): number | null {
+  const re = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
-    const n = Number.parseInt(m[1] ?? "1", 10);
-    if (Number.isFinite(n) && n > max) max = n;
+    const href = m[1] ?? "";
+    if (!/mypage\.php/i.test(href)) continue;
+    const text = stripTags(m[2] ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (text !== "next" && text !== "次" && text !== "次へ") continue;
+    const pageMatch = /[?&]p=(\d+)/i.exec(href);
+    if (!pageMatch?.[1]) continue;
+    const n = Number.parseInt(pageMatch[1], 10);
+    if (Number.isFinite(n) && n > 0) return n;
   }
-  return max;
+  return null;
 }
 
 export const koekoeProvider: Provider = {
@@ -362,32 +371,31 @@ export const koekoeProvider: Provider = {
   async *listFavorites(session: Session): AsyncIterable<RemoteWorkRef> {
     let cookie = requireCookie(session);
     const seen = new Set<string>();
+    // mypage only exposes prev/next links — never a final page number.
+    // Follow `next` until exhausted (same pattern as otobanana/erovoice).
+    const MAX_PAGES = 200;
+    let pageNum = 1;
 
-    await sleep(REQUEST_GAP_MS);
-    const first = await fetchHtml(`${BASE}/mypage.php`, cookie);
-    cookie = first.cookieHeader;
-    if (!looksLoggedIn(first.html)) {
-      throw new Error("Koe-koe session expired during listFavorites");
-    }
-
-    const maxPage = Math.min(parsePaginationMax(first.html), 50);
-    const pages = [first.html];
-
-    for (let p = 2; p <= maxPage; p += 1) {
+    for (let guard = 0; guard < MAX_PAGES; guard += 1) {
       await sleep(REQUEST_GAP_MS);
-      const page = await fetchHtml(`${BASE}/mypage.php?p=${p}`, cookie);
+      const url =
+        pageNum <= 1
+          ? `${BASE}/mypage.php`
+          : `${BASE}/mypage.php?p=${pageNum}`;
+      const page = await fetchHtml(url, cookie);
       cookie = page.cookieHeader;
-      if (!looksLoggedIn(page.html)) break;
-      pages.push(page.html);
-    }
+      if (!looksLoggedIn(page.html)) {
+        if (guard === 0) {
+          throw new Error("Koe-koe session expired during listFavorites");
+        }
+        break;
+      }
 
-    // Persist refreshed cookie onto session object for caller if they re-save
-    session.data.cookieHeader = cookie;
-
-    for (const html of pages) {
-      for (const id of parseBookmarkIds(html)) {
+      let newCount = 0;
+      for (const id of parseBookmarkIds(page.html)) {
         if (seen.has(id)) continue;
         seen.add(id);
+        newCount += 1;
         yield {
           provider: "koekoe",
           workId: id,
@@ -395,7 +403,14 @@ export const koekoeProvider: Provider = {
           title: undefined,
         };
       }
+
+      const next = parseNextMypagePage(page.html);
+      if (next == null || next <= pageNum || newCount === 0) break;
+      pageNum = next;
     }
+
+    // Persist refreshed cookie onto session object for caller if they re-save
+    session.data.cookieHeader = cookie;
   },
 
   async getWork(session: Session, workId: string): Promise<WorkMetadata> {
