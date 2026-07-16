@@ -1,8 +1,8 @@
 node_modules
 dist
-data
-media
-cache
+/data/
+/media/
+/cache/
 *.db
 *.db-*
 .env
