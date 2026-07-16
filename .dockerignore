@@ -12,9 +12,9 @@
 **/.tmp-research
 **/node_modules
 **/dist
-data
-media
-cache
+/data
+/media
+/cache
 docs
 *.md
 !README.md
@@ -26,6 +26,7 @@ docs
 **/.turbo
 **/*.db
 **/*.db-*
+**/*.tsbuildinfo
 **/.DS_Store
 apps/server/scripts
 apps/server/test
