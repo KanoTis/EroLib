@@ -101,5 +101,92 @@ export async function migrate(client: Client): Promise<void> {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS live_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL DEFAULT 'otobanana',
+      author_id TEXT NOT NULL,
+      username TEXT,
+      display_name TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_onair_at TEXT,
+      last_room_id TEXT,
+      last_check_at TEXT,
+      last_error TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS live_subscriptions_provider_author_uidx
+      ON live_subscriptions(provider, author_id);
+
+    CREATE TABLE IF NOT EXISTS live_record_jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL DEFAULT 'otobanana',
+      author_id TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      post_ptr_id TEXT,
+      stream_service TEXT,
+      title TEXT,
+      state TEXT NOT NULL DEFAULT 'pending_media',
+      started_at TEXT,
+      ended_at TEXT,
+      media_rel_path TEXT,
+      error TEXT,
+      meta_json TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS live_record_jobs_provider_room_uidx
+      ON live_record_jobs(provider, room_id);
+
+    CREATE TABLE IF NOT EXISTS live_followee_authors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL DEFAULT 'otobanana',
+      author_id TEXT NOT NULL,
+      username TEXT,
+      display_name TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS live_followee_authors_provider_author_uidx
+      ON live_followee_authors(provider, author_id);
+
+    CREATE TABLE IF NOT EXISTS live_followee_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL DEFAULT 'otobanana',
+      author_id TEXT NOT NULL,
+      room_id TEXT NOT NULL,
+      post_ptr_id TEXT,
+      stream_service TEXT,
+      title TEXT,
+      is_open INTEGER NOT NULL DEFAULT 0,
+      is_adult INTEGER,
+      listener_count INTEGER,
+      room_open_at TEXT,
+      room_close_at TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS live_followee_sessions_provider_room_uidx
+      ON live_followee_sessions(provider, room_id);
+    CREATE INDEX IF NOT EXISTS live_followee_sessions_provider_author_idx
+      ON live_followee_sessions(provider, author_id);
+
+    CREATE TABLE IF NOT EXISTS live_media (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL DEFAULT 'otobanana',
+      room_id TEXT NOT NULL,
+      author_id TEXT NOT NULL,
+      author_name TEXT,
+      title TEXT,
+      job_id INTEGER,
+      audio_ext TEXT NOT NULL DEFAULT 'wav',
+      media_rel_path TEXT NOT NULL,
+      bytes INTEGER,
+      duration_seconds INTEGER,
+      recorded_at TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS live_media_provider_room_uidx
+      ON live_media(provider, room_id);
   `);
 }

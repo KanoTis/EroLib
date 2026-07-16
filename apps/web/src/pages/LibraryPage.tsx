@@ -1,6 +1,6 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
-import type { WorkPublic } from "@erolib/shared";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { Link, useSearchParams } from "react-router-dom";
+import type { LiveMediaPublic, WorkPublic } from "@erolib/shared";
 import { api } from "../api";
 import { WorkCover } from "../components/WorkCover";
 import {
@@ -22,6 +22,25 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 type LibraryViewMode = "small" | "standard" | "list";
+type KindFilter = "all" | "vod" | "live";
+
+type PlayingItem =
+  | { kind: "vod"; title: string; provider: string; workId: string }
+  | { kind: "live"; title: string; provider: string; roomId: string };
+
+type LibraryItem =
+  | {
+      kind: "vod";
+      key: string;
+      sortAt: string;
+      work: WorkPublic;
+    }
+  | {
+      kind: "live";
+      key: string;
+      sortAt: string;
+      media: LiveMediaPublic;
+    };
 
 const VIEW_MODE_KEY = "erolib.library.viewMode";
 
@@ -65,41 +84,98 @@ function writeViewMode(mode: LibraryViewMode): void {
   }
 }
 
+function parseKind(raw: string | null): KindFilter {
+  if (raw === "vod" || raw === "live" || raw === "all") return raw;
+  return "all";
+}
+
 export function LibraryPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [works, setWorks] = useState<WorkPublic[]>([]);
+  const [liveItems, setLiveItems] = useState<LiveMediaPublic[]>([]);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [provider, setProvider] = useState("");
+  const [kind, setKind] = useState<KindFilter>(() =>
+    parseKind(searchParams.get("type")),
+  );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [playing, setPlaying] = useState<WorkPublic | null>(null);
-  const [viewMode, setViewMode] = useState<LibraryViewMode>(() => readViewMode());
+  const [playing, setPlaying] = useState<PlayingItem | null>(null);
+  const [viewMode, setViewMode] = useState<LibraryViewMode>(() =>
+    readViewMode(),
+  );
 
   async function load(): Promise<void> {
     try {
       setError(null);
       setLoading(true);
-      const data = await api.works({
-        q: q || undefined,
-        status: status || undefined,
-        provider: provider || undefined,
-      });
-      setWorks(data);
+      const wantVod = kind === "all" || kind === "vod";
+      const wantLive = kind === "all" || kind === "live";
+      const [vod, live] = await Promise.all([
+        wantVod
+          ? api.works({
+              q: q || undefined,
+              status: status || undefined,
+              provider: provider || undefined,
+            })
+          : Promise.resolve([] as WorkPublic[]),
+        wantLive
+          ? api.liveMedia({
+              q: q || undefined,
+              provider: provider || undefined,
+              limit: 50,
+            })
+          : Promise.resolve([] as LiveMediaPublic[]),
+      ]);
+      setWorks(vod);
+      setLiveItems(live);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
     }
   }
-
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount + type query
+  }, [kind]);
+
+  useEffect(() => {
+    const next = parseKind(searchParams.get("type"));
+    if (next !== kind) setKind(next);
+  }, [searchParams, kind]);
+
+  function changeKind(next: KindFilter): void {
+    setKind(next);
+    const sp = new URLSearchParams(searchParams);
+    if (next === "all") sp.delete("type");
+    else sp.set("type", next);
+    setSearchParams(sp, { replace: true });
+  }
 
   function changeViewMode(mode: LibraryViewMode): void {
     setViewMode(mode);
     writeViewMode(mode);
   }
+
+  const items = useMemo((): LibraryItem[] => {
+    const vodItems: LibraryItem[] = works.map((w) => ({
+      kind: "vod" as const,
+      key: `vod:${w.provider}:${w.workId}`,
+      sortAt: w.updatedAt || w.createdAt,
+      work: w,
+    }));
+    const liveMapped: LibraryItem[] = liveItems.map((m) => ({
+      kind: "live" as const,
+      key: `live:${m.provider}:${m.roomId}`,
+      sortAt: m.updatedAt || m.recordedAt || m.createdAt,
+      media: m,
+    }));
+    return [...vodItems, ...liveMapped].sort((a, b) =>
+      b.sortAt.localeCompare(a.sortAt),
+    );
+  }, [works, liveItems]);
 
   const listClassName =
     viewMode === "list"
@@ -114,7 +190,9 @@ export function LibraryPage() {
         <div>
           <p className="page-kicker">Library</p>
           <h1>媒体库</h1>
-          <p className="page-desc">浏览已备份作品。仅「已下载」状态可播放。</p>
+          <p className="page-desc">
+            浏览已备份点播与直播录制。点播「已下载」与直播成品可播放。
+          </p>
         </div>
         <div className="toolbar">
           <label className="field" style={{ minWidth: 220 }}>
@@ -130,6 +208,16 @@ export function LibraryPage() {
             />
           </label>
           <select
+            value={kind}
+            onChange={(e) => changeKind(parseKind(e.target.value))}
+            aria-label="按类型筛选"
+            style={{ width: "auto", minWidth: 120 }}
+          >
+            <option value="all">全部类型</option>
+            <option value="vod">点播</option>
+            <option value="live">直播</option>
+          </select>
+          <select
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
             aria-label="按渠道筛选"
@@ -140,19 +228,21 @@ export function LibraryPage() {
             <option value="koekoe">Koe-koe</option>
             <option value="erovoice">Erovoice</option>
           </select>
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            aria-label="按状态筛选"
-            style={{ width: "auto", minWidth: 140 }}
-          >
-            <option value="">全部状态</option>
-            <option value="downloaded">已下载</option>
-            <option value="queued">队列中</option>
-            <option value="downloading">下载中</option>
-            <option value="failed">失败</option>
-            <option value="discovered">已发现</option>
-          </select>
+          {kind !== "live" ? (
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              aria-label="按状态筛选"
+              style={{ width: "auto", minWidth: 140 }}
+            >
+              <option value="">全部状态</option>
+              <option value="downloaded">已下载</option>
+              <option value="queued">队列中</option>
+              <option value="downloading">下载中</option>
+              <option value="failed">失败</option>
+              <option value="discovered">已发现</option>
+            </select>
+          ) : null}
           <button type="button" onClick={() => void load()}>
             <IconSearch width={16} height={16} />
             搜索
@@ -192,30 +282,114 @@ export function LibraryPage() {
           <span className="spinner" />
           正在加载媒体库…
         </div>
-      ) : works.length === 0 ? (
+      ) : items.length === 0 ? (
         <div className="empty-state">
           <IconWave width={36} height={36} />
-          <strong>暂无作品</strong>
-          <p>先去 Providers 绑定账号，再在「同步」触发收藏同步。</p>
+          <strong>暂无条目</strong>
+          <p>
+            点播：Providers 绑定后同步收藏。直播：在「直播」页选定作者并完成录制。
+          </p>
           <div className="row">
             <Link to="/providers">
               <button type="button">配置 Provider</button>
             </Link>
-            <Link to="/sync">
+            <Link to="/live">
               <button type="button" className="secondary">
-                去同步
+                直播录制
               </button>
             </Link>
           </div>
         </div>
       ) : (
         <div className={listClassName}>
-          {works.map((w) => {
+          {items.map((item) => {
             const isList = viewMode === "list";
+            if (item.kind === "live") {
+              const m = item.media;
+              const title = m.title || m.roomId;
+              return (
+                <article
+                  className={isList ? "work-card work-card--list" : "work-card"}
+                  key={item.key}
+                >
+                  <WorkCover
+                    provider={m.provider}
+                    workId={m.roomId}
+                    title={title}
+                    authorName={m.authorName}
+                    coverPath={null}
+                    size={isList ? "list" : "card"}
+                    badge={
+                      isList ? undefined : (
+                        <span className="badge queued">直播</span>
+                      )
+                    }
+                  />
+                  {isList ? (
+                    <div className="work-body">
+                      <div className="work-main">
+                        <div className="work-title">{title}</div>
+                        <div className="work-meta">
+                          {m.authorName ?? m.authorId}
+                        </div>
+                      </div>
+                      <div className="work-actions">
+                        <span className="badge soft">{m.provider}</span>
+                        <span className="badge queued">直播</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPlaying({
+                              kind: "live",
+                              title,
+                              provider: m.provider,
+                              roomId: m.roomId,
+                            })
+                          }
+                        >
+                          <IconPlay width={14} height={14} />
+                          播放
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="work-body">
+                      <div className="work-title">{title}</div>
+                      <div className="work-meta">
+                        {m.authorName ?? m.authorId} · {m.provider}
+                      </div>
+                      <div className="work-meta">
+                        录制完成：{m.recordedAt || m.updatedAt}
+                      </div>
+                      <div className="work-actions">
+                        <span className="badge soft">{m.provider}</span>
+                        <span className="badge queued">直播</span>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPlaying({
+                              kind: "live",
+                              title,
+                              provider: m.provider,
+                              roomId: m.roomId,
+                            })
+                          }
+                        >
+                          <IconPlay width={14} height={14} />
+                          播放
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </article>
+              );
+            }
+
+            const w = item.work;
             return (
               <article
                 className={isList ? "work-card work-card--list" : "work-card"}
-                key={`${w.provider}:${w.workId}`}
+                key={item.key}
               >
                 <WorkCover
                   provider={w.provider}
@@ -247,11 +421,22 @@ export function LibraryPage() {
                     </div>
                     <div className="work-actions">
                       <span className="badge soft">{w.provider}</span>
+                      <span className="badge soft">点播</span>
                       <span className={`badge ${w.status}`}>
                         {STATUS_LABEL[w.status] ?? w.status}
                       </span>
                       {w.status === "downloaded" ? (
-                        <button type="button" onClick={() => setPlaying(w)}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPlaying({
+                              kind: "vod",
+                              title: w.title,
+                              provider: w.provider,
+                              workId: w.workId,
+                            })
+                          }
+                        >
                           <IconPlay width={14} height={14} />
                           播放
                         </button>
@@ -276,8 +461,19 @@ export function LibraryPage() {
                     </div>
                     <div className="work-actions">
                       <span className="badge soft">{w.provider}</span>
+                      <span className="badge soft">点播</span>
                       {w.status === "downloaded" ? (
-                        <button type="button" onClick={() => setPlaying(w)}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPlaying({
+                              kind: "vod",
+                              title: w.title,
+                              provider: w.provider,
+                              workId: w.workId,
+                            })
+                          }
+                        >
                           <IconPlay width={14} height={14} />
                           播放
                         </button>
@@ -293,10 +489,13 @@ export function LibraryPage() {
         </div>
       )}
 
-      {playing && playing.status === "downloaded" ? (
+      {playing ? (
         <div className="player" role="region" aria-label="播放器">
           <div className="player-top">
-            <div className="player-title">正在播放：{playing.title}</div>
+            <div className="player-title">
+              正在播放：{playing.title}
+              {playing.kind === "live" ? " · 直播" : ""}
+            </div>
             <button
               type="button"
               className="ghost icon-btn"
@@ -309,7 +508,11 @@ export function LibraryPage() {
           <audio
             controls
             autoPlay
-            src={api.audioUrl(playing.provider, playing.workId)}
+            src={
+              playing.kind === "live"
+                ? api.liveAudioUrl(playing.provider, playing.roomId)
+                : api.audioUrl(playing.provider, playing.workId)
+            }
           />
         </div>
       ) : null}

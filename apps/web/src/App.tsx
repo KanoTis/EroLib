@@ -13,6 +13,7 @@ import {
 } from "./components/Icons";
 import { JobsPage } from "./pages/JobsPage";
 import { LibraryPage } from "./pages/LibraryPage";
+import { LivePage } from "./pages/LivePage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -101,6 +102,9 @@ export function App() {
           <NavLink to="/jobs" icon={<IconJobs />}>
             下载任务
           </NavLink>
+          <NavLink to="/live" icon={<IconWave />}>
+            直播
+          </NavLink>
           <NavLink to="/settings" icon={<IconSettings />}>
             设置
           </NavLink>
@@ -146,6 +150,7 @@ export function App() {
             <Route path="/providers" element={<ProvidersPage />} />
             <Route path="/sync" element={<SyncPage />} />
             <Route path="/jobs" element={<JobsPage />} />
+            <Route path="/live" element={<LivePage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

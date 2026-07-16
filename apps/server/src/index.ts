@@ -5,6 +5,8 @@ import { loadConfig } from "./config.js";
 import { createDb, migrate } from "./db/client.js";
 import { settings } from "./db/schema.js";
 import { createJobRunner } from "./jobs/runner.js";
+import { createLivePoller } from "./jobs/live-poller.js";
+import { createLiveHistorySyncer } from "./jobs/live-history-sync.js";
 import { ensureStorageRoots } from "./storage/paths.js";
 
 async function main(): Promise<void> {
@@ -37,7 +39,13 @@ async function main(): Promise<void> {
   const runner = createJobRunner(db, config);
   runner.start();
 
-  const app = createApp({ config, db, runner });
+  const livePoller = createLivePoller(db, config);
+  livePoller.start();
+
+  const historySyncer = createLiveHistorySyncer(db, config);
+  historySyncer.start();
+
+  const app = createApp({ config, db, runner, livePoller, historySyncer });
 
   serve(
     {
@@ -57,6 +65,8 @@ async function main(): Promise<void> {
   const shutdown = (): void => {
     console.log("[erolib] shutting down");
     runner.stop();
+    livePoller.stop();
+    historySyncer.stop();
     client.close();
     process.exit(0);
   };

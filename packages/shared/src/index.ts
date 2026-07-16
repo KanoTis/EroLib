@@ -11,6 +11,15 @@ export type WorkStatus =
 
 export type JobState = "queued" | "running" | "done" | "failed";
 
+export type LiveJobState =
+  | "discovered"
+  | "pending_media"
+  | "blocked"
+  | "recording"
+  | "completed"
+  | "ended"
+  | "failed";
+
 export type AccountStatus = "ok" | "error" | "disabled" | "unknown";
 
 export interface ProviderAuth {
@@ -141,6 +150,112 @@ export interface HealthResponse {
   ok: true;
   version: string;
   time: string;
+}
+
+export interface LiveSubscriptionPublic {
+  id: number;
+  provider: ProviderId;
+  authorId: string;
+  username: string | null;
+  displayName: string | null;
+  enabled: boolean;
+  lastOnairAt: string | null;
+  lastRoomId: string | null;
+  lastCheckAt: string | null;
+  lastError: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LiveRecordJobPublic {
+  id: number;
+  provider: ProviderId;
+  authorId: string;
+  authorUsername: string | null;
+  authorDisplayName: string | null;
+  roomId: string;
+  postPtrId: string | null;
+  streamService: string | null;
+  title: string | null;
+  state: LiveJobState;
+  startedAt: string | null;
+  endedAt: string | null;
+  mediaRelPath: string | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LiveOnairPublic {
+  roomId: string;
+  authorId: string;
+  username: string | null;
+  displayName: string | null;
+  title: string | null;
+  postPtrId: string | null;
+  streamService: string | null;
+  isOpen: boolean;
+  isAdult: boolean | null;
+  listenerCount: number | null;
+  roomOpenAt: string | null;
+  roomCloseAt?: string | null;
+  selected: boolean;
+  recordState?: LiveJobState | null;
+  recordJobId?: number | null;
+  recordError?: string | null;
+}
+
+export interface LiveFolloweeSessionPublic {
+  roomId: string;
+  title: string | null;
+  postPtrId: string | null;
+  streamService: string | null;
+  isOpen: boolean;
+  isAdult: boolean | null;
+  listenerCount: number | null;
+  roomOpenAt: string | null;
+  roomCloseAt: string | null;
+  recordState: LiveJobState | null;
+  recordJobId: number | null;
+  recordError: string | null;
+}
+
+export interface LiveFolloweeAuthorPublic {
+  authorId: string;
+  username: string | null;
+  displayName: string | null;
+  selected: boolean;
+  liveNow: boolean;
+  sessions: LiveFolloweeSessionPublic[];
+}
+
+/** Local-cache read model for Live page history panel. */
+export interface LiveFolloweeHistoryPublic {
+  authors: LiveFolloweeAuthorPublic[];
+  /** Last successful background sync time (ISO-ish SQL datetime). */
+  syncedAt: string | null;
+  lastError: string | null;
+  /** True while a background sync is in flight. */
+  syncing: boolean;
+}
+
+/** Library entry for a completed live recording (parallel to WorkPublic). */
+export interface LiveMediaPublic {
+  id: number;
+  kind: "live";
+  provider: ProviderId;
+  roomId: string;
+  authorId: string;
+  authorName: string | null;
+  title: string | null;
+  jobId: number | null;
+  audioExt: string;
+  mediaRelPath: string;
+  bytes: number | null;
+  durationSeconds: number | null;
+  recordedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export const PROVIDER_IDS: ProviderId[] = ["otobanana", "koekoe", "erovoice"];

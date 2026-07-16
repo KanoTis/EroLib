@@ -65,6 +65,26 @@ export function cacheTmpDir(cacheRoot: string): string {
   return path.join(cacheRoot, "tmp");
 }
 
+/**
+ * Finished live recordings under MEDIA_DIR:
+ * `{mediaRoot}/{provider}/live/{authorId}/{roomSafe}/`
+ */
+export function liveMediaDir(
+  mediaRoot: string,
+  provider: string,
+  authorId: string,
+  roomId: string,
+): string {
+  const roomSafe = sanitizePathSegment(roomId.replace(/:/g, "_"));
+  return path.join(
+    mediaRoot,
+    sanitizePathSegment(provider),
+    "live",
+    resolveAuthorId(authorId),
+    roomSafe,
+  );
+}
+
 export async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
 }

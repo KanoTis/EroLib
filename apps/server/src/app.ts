@@ -10,6 +10,13 @@ import { Readable } from "node:stream";
 import { z } from "zod";
 import type {
   AuthMode,
+  LiveFolloweeAuthorPublic,
+  LiveFolloweeHistoryPublic,
+  LiveJobState,
+  LiveMediaPublic,
+  LiveOnairPublic,
+  LiveRecordJobPublic,
+  LiveSubscriptionPublic,
   ProviderAccountPublic,
   ProviderId,
   SettingsPublic,
@@ -34,19 +41,35 @@ import {
 import type { AppDatabase } from "./db/client.js";
 import {
   downloadJobs,
+  liveFolloweeAuthors,
+  liveFolloweeSessions,
+  liveMedia,
+  liveRecordJobs,
+  liveSubscriptions,
   providerAccounts,
   settings,
   syncRuns,
   works,
+  type ProviderAccountRow,
 } from "./db/schema.js";
+import type { LiveHistorySyncer } from "./jobs/live-history-sync.js";
+import type { LivePoller } from "./jobs/live-poller.js";
 import type { JobRunner } from "./jobs/runner.js";
 import { getProvider } from "./providers/index.js";
+import {
+  listFolloweeLivestreams,
+  resolveAuthorByInput,
+} from "./providers/otobanana-live.js";
+import { sessionData } from "./providers/types.js";
 import { mediaWorkDir, pathExists } from "./storage/paths.js";
+import type { ProviderAuth, Session } from "@erolib/shared";
 
 export interface AppDeps {
   config: AppConfig;
   db: AppDatabase;
   runner: JobRunner;
+  livePoller: LivePoller;
+  historySyncer: LiveHistorySyncer;
 }
 
 type AuthEnv = {
@@ -165,7 +188,7 @@ function toPublicWork(row: typeof works.$inferSelect): WorkPublic {
 }
 
 export function createApp(deps: AppDeps): Hono<AuthEnv> {
-  const { config, db, runner } = deps;
+  const { config, db, runner, livePoller, historySyncer } = deps;
   const app = new Hono<AuthEnv>();
 
   app.use(
@@ -707,6 +730,563 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
         updatedAt: r.updatedAt,
       })),
     );
+  });
+
+  function toLiveSubscription(
+    row: typeof liveSubscriptions.$inferSelect,
+  ): LiveSubscriptionPublic {
+    return {
+      id: row.id,
+      provider: row.provider as ProviderId,
+      authorId: row.authorId,
+      username: row.username,
+      displayName: row.displayName,
+      enabled: row.enabled,
+      lastOnairAt: row.lastOnairAt,
+      lastRoomId: row.lastRoomId,
+      lastCheckAt: row.lastCheckAt,
+      lastError: row.lastError,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  function toLiveJob(
+    row: typeof liveRecordJobs.$inferSelect,
+    authorUsername: string | null,
+    authorDisplayName: string | null,
+  ): LiveRecordJobPublic {
+    return {
+      id: row.id,
+      provider: row.provider as ProviderId,
+      authorId: row.authorId,
+      authorUsername,
+      authorDisplayName,
+      roomId: row.roomId,
+      postPtrId: row.postPtrId,
+      streamService: row.streamService,
+      title: row.title,
+      state: row.state as LiveJobState,
+      startedAt: row.startedAt,
+      endedAt: row.endedAt,
+      mediaRelPath: row.mediaRelPath,
+      error: row.error,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  function toLiveMedia(
+    row: typeof liveMedia.$inferSelect,
+  ): LiveMediaPublic {
+    return {
+      id: row.id,
+      kind: "live",
+      provider: row.provider as ProviderId,
+      roomId: row.roomId,
+      authorId: row.authorId,
+      authorName: row.authorName,
+      title: row.title,
+      jobId: row.jobId,
+      audioExt: row.audioExt,
+      mediaRelPath: row.mediaRelPath,
+      bytes: row.bytes,
+      durationSeconds: row.durationSeconds,
+      recordedAt: row.recordedAt,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  function parseSessionBlob(blob: string | null): Session | null {
+    if (!blob) return null;
+    try {
+      const parsed: unknown = JSON.parse(blob);
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "provider" in parsed &&
+        "data" in parsed
+      ) {
+        return parsed as Session;
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+
+  async function ensureOtobananaSession(): Promise<Session> {
+    const [account] = await db
+      .select()
+      .from(providerAccounts)
+      .where(eq(providerAccounts.provider, "otobanana"))
+      .limit(1);
+    if (!account) {
+      throw new Error("Otobanana provider account not configured");
+    }
+    if (!account.enabled) {
+      throw new Error("Otobanana provider account is disabled");
+    }
+    return ensureProviderSession(account);
+  }
+
+  async function ensureProviderSession(
+    account: ProviderAccountRow,
+  ): Promise<Session> {
+    const provider = getProvider(account.provider as ProviderId);
+    let creds: CredentialPayload;
+    try {
+      const raw: unknown = JSON.parse(account.encryptedPayload);
+      if (!raw || typeof raw !== "object" || !("v" in raw) || !("data" in raw)) {
+        throw new Error("Invalid credential blob");
+      }
+      creds = decryptJson<CredentialPayload>(
+        config.credentialsSecret,
+        raw as EncryptedBlob,
+      );
+    } catch {
+      throw new Error("Failed to decrypt provider credentials");
+    }
+    const existing = parseSessionBlob(account.sessionBlob);
+    if (existing) {
+      try {
+        if (await provider.isSessionValid(existing)) {
+          return existing;
+        }
+      } catch {
+        // re-login
+      }
+    }
+    const auth: ProviderAuth = {
+      mode: creds.mode,
+      username: creds.username,
+      password: creds.password,
+      cookieHeader: creds.cookieHeader,
+    };
+    const session = await provider.login(auth);
+    const now = new Date()
+      .toISOString()
+      .replace("T", " ")
+      .replace(/\.\d{3}Z$/, "");
+    await db
+      .update(providerAccounts)
+      .set({
+        sessionBlob: JSON.stringify(session),
+        status: "ok",
+        statusMessage: null,
+        updatedAt: now,
+      })
+      .where(eq(providerAccounts.id, account.id));
+    return session;
+  }
+
+  app.get("/api/live/subscriptions", async (c) => {
+    const rows = await db
+      .select()
+      .from(liveSubscriptions)
+      .orderBy(desc(liveSubscriptions.id));
+    return c.json(rows.map(toLiveSubscription));
+  });
+
+  app.post("/api/live/subscriptions", async (c) => {
+    const body: unknown = await c.req.json().catch(() => ({}));
+    const parsed = z
+      .object({
+        input: z.string().min(1),
+      })
+      .safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: "input is required" }, 400);
+    }
+    let token: string | null = null;
+    try {
+      const session = await ensureOtobananaSession();
+      token = sessionData(session).accessToken ?? null;
+    } catch {
+      // anonymous resolve is fine for public search/onair
+    }
+    try {
+      const author = await resolveAuthorByInput(parsed.data.input, token);
+      const now = new Date()
+        .toISOString()
+        .replace("T", " ")
+        .replace(/\.\d{3}Z$/, "");
+      try {
+        await db.insert(liveSubscriptions).values({
+          provider: "otobanana",
+          authorId: author.authorId,
+          username: author.username,
+          displayName: author.displayName,
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch {
+        return c.json({ error: "Author already in live subscription list" }, 409);
+      }
+      const [row] = await db
+        .select()
+        .from(liveSubscriptions)
+        .where(
+          and(
+            eq(liveSubscriptions.provider, "otobanana"),
+            eq(liveSubscriptions.authorId, author.authorId),
+          ),
+        )
+        .limit(1);
+      if (!row) return c.json({ error: "Failed to create subscription" }, 500);
+      await livePoller.pollNow();
+      return c.json(toLiveSubscription(row), 201);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.patch("/api/live/subscriptions/:id", async (c) => {
+    const id = Number.parseInt(c.req.param("id"), 10);
+    if (!Number.isFinite(id)) return c.json({ error: "Invalid id" }, 400);
+    const body: unknown = await c.req.json().catch(() => ({}));
+    const parsed = z
+      .object({
+        enabled: z.boolean().optional(),
+      })
+      .safeParse(body);
+    if (!parsed.success) return c.json({ error: "Invalid body" }, 400);
+    if (parsed.data.enabled === undefined) {
+      return c.json({ error: "No fields to update" }, 400);
+    }
+    const now = new Date()
+      .toISOString()
+      .replace("T", " ")
+      .replace(/\.\d{3}Z$/, "");
+    await db
+      .update(liveSubscriptions)
+      .set({
+        enabled: parsed.data.enabled,
+        updatedAt: now,
+      })
+      .where(eq(liveSubscriptions.id, id));
+    const [row] = await db
+      .select()
+      .from(liveSubscriptions)
+      .where(eq(liveSubscriptions.id, id))
+      .limit(1);
+    if (!row) return c.json({ error: "Not found" }, 404);
+    return c.json(toLiveSubscription(row));
+  });
+
+  app.delete("/api/live/subscriptions/:id", async (c) => {
+    const id = Number.parseInt(c.req.param("id"), 10);
+    if (!Number.isFinite(id)) return c.json({ error: "Invalid id" }, 400);
+    await db.delete(liveSubscriptions).where(eq(liveSubscriptions.id, id));
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/live/followees", async (c) => {
+    try {
+      const session = await ensureOtobananaSession();
+      const token = sessionData(session).accessToken;
+      if (!token) {
+        return c.json({ error: "Otobanana session missing access token" }, 400);
+      }
+      const rooms = await listFolloweeLivestreams(token);
+      const subs = await db
+        .select({ authorId: liveSubscriptions.authorId })
+        .from(liveSubscriptions)
+        .where(eq(liveSubscriptions.provider, "otobanana"));
+      const selected = new Set(subs.map((s) => s.authorId));
+      const jobRows = await db
+        .select()
+        .from(liveRecordJobs)
+        .where(eq(liveRecordJobs.provider, "otobanana"))
+        .orderBy(desc(liveRecordJobs.id))
+        .limit(500);
+      const jobByRoom = new Map(jobRows.map((j) => [j.roomId, j]));
+      const payload: LiveOnairPublic[] = rooms.map((r) => {
+        const job = jobByRoom.get(r.roomId);
+        return {
+          roomId: r.roomId,
+          authorId: r.authorId,
+          username: r.username,
+          displayName: r.displayName,
+          title: r.title,
+          postPtrId: r.postPtrId,
+          streamService: r.streamService,
+          isOpen: r.isOpen,
+          isAdult: r.isAdult,
+          listenerCount: r.listenerCount,
+          roomOpenAt: r.roomOpenAt,
+          roomCloseAt: r.roomCloseAt,
+          selected: selected.has(r.authorId),
+          recordState: job ? (job.state as LiveJobState) : null,
+          recordJobId: job?.id ?? null,
+          recordError: job?.error ?? null,
+        };
+      });
+      return c.json(payload);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const status = message.includes("not configured") ? 400 : 502;
+      return c.json({ error: message }, status);
+    }
+  });
+
+  app.get("/api/live/followees/history", async (c) => {
+    try {
+      const status = await historySyncer.getStatus();
+      const authorRows = await db
+        .select()
+        .from(liveFolloweeAuthors)
+        .where(eq(liveFolloweeAuthors.provider, "otobanana"));
+      const sessionRows = await db
+        .select()
+        .from(liveFolloweeSessions)
+        .where(eq(liveFolloweeSessions.provider, "otobanana"));
+      const subs = await db
+        .select({ authorId: liveSubscriptions.authorId })
+        .from(liveSubscriptions)
+        .where(eq(liveSubscriptions.provider, "otobanana"));
+      const selected = new Set(subs.map((s) => s.authorId));
+      const jobRows = await db
+        .select()
+        .from(liveRecordJobs)
+        .where(eq(liveRecordJobs.provider, "otobanana"))
+        .orderBy(desc(liveRecordJobs.id))
+        .limit(1000);
+      const jobByRoom = new Map(jobRows.map((j) => [j.roomId, j]));
+
+      const sessionsByAuthor = new Map<string, typeof sessionRows>();
+      for (const s of sessionRows) {
+        const list = sessionsByAuthor.get(s.authorId) ?? [];
+        list.push(s);
+        sessionsByAuthor.set(s.authorId, list);
+      }
+
+      const authors: LiveFolloweeAuthorPublic[] = authorRows
+        .map((a) => {
+          const sessions = (sessionsByAuthor.get(a.authorId) ?? [])
+            .slice()
+            .sort((x, y) => {
+              if (x.isOpen !== y.isOpen) return Number(y.isOpen) - Number(x.isOpen);
+              return (y.roomOpenAt ?? "").localeCompare(x.roomOpenAt ?? "");
+            })
+            .map((s) => {
+              const job = jobByRoom.get(s.roomId);
+              return {
+                roomId: s.roomId,
+                title: s.title,
+                postPtrId: s.postPtrId,
+                streamService: s.streamService,
+                isOpen: s.isOpen,
+                isAdult: s.isAdult,
+                listenerCount: s.listenerCount,
+                roomOpenAt: s.roomOpenAt,
+                roomCloseAt: s.roomCloseAt,
+                recordState: job ? (job.state as LiveJobState) : null,
+                recordJobId: job?.id ?? null,
+                recordError: job?.error ?? null,
+              };
+            });
+          return {
+            authorId: a.authorId,
+            username: a.username,
+            displayName: a.displayName,
+            selected: selected.has(a.authorId),
+            liveNow: sessions.some((s) => s.isOpen),
+            sessions,
+          };
+        })
+        .sort((a, b) => {
+          if (a.liveNow !== b.liveNow) return Number(b.liveNow) - Number(a.liveNow);
+          const aT = a.sessions[0]?.roomOpenAt ?? "";
+          const bT = b.sessions[0]?.roomOpenAt ?? "";
+          return bT.localeCompare(aT);
+        });
+
+      const payload: LiveFolloweeHistoryPublic = {
+        authors,
+        syncedAt: status.syncedAt,
+        lastError: status.lastError,
+        syncing: status.syncing,
+      };
+      return c.json(payload);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  app.post("/api/live/followees/history/sync", async (c) => {
+    // Fire-and-forget background refresh; UI keeps reading local cache.
+    void historySyncer.syncNow();
+    const status = await historySyncer.getStatus();
+    return c.json({ ok: true, ...status });
+  });
+
+  app.post("/api/live/followees/:authorId/select", async (c) => {
+    const authorId = c.req.param("authorId");
+    if (!authorId) return c.json({ error: "authorId required" }, 400);
+    let token: string | null = null;
+    try {
+      const session = await ensureOtobananaSession();
+      token = sessionData(session).accessToken ?? null;
+    } catch {
+      // optional
+    }
+    try {
+      const author = await resolveAuthorByInput(authorId, token);
+      const now = new Date()
+        .toISOString()
+        .replace("T", " ")
+        .replace(/\.\d{3}Z$/, "");
+      try {
+        await db.insert(liveSubscriptions).values({
+          provider: "otobanana",
+          authorId: author.authorId,
+          username: author.username,
+          displayName: author.displayName,
+          enabled: true,
+          createdAt: now,
+          updatedAt: now,
+        });
+      } catch {
+        // already selected — treat as success
+      }
+      const [row] = await db
+        .select()
+        .from(liveSubscriptions)
+        .where(
+          and(
+            eq(liveSubscriptions.provider, "otobanana"),
+            eq(liveSubscriptions.authorId, author.authorId),
+          ),
+        )
+        .limit(1);
+      if (!row) return c.json({ error: "Failed to select author" }, 500);
+      await livePoller.pollNow();
+      return c.json(toLiveSubscription(row));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.get("/api/live/jobs", async (c) => {
+    const rows = await db
+      .select({
+        job: liveRecordJobs,
+        username: liveSubscriptions.username,
+        displayName: liveSubscriptions.displayName,
+      })
+      .from(liveRecordJobs)
+      .leftJoin(
+        liveSubscriptions,
+        and(
+          eq(liveSubscriptions.provider, liveRecordJobs.provider),
+          eq(liveSubscriptions.authorId, liveRecordJobs.authorId),
+        ),
+      )
+      .orderBy(desc(liveRecordJobs.id))
+      .limit(200);
+    return c.json(
+      rows.map((r) =>
+        toLiveJob(r.job, r.username ?? null, r.displayName ?? null),
+      ),
+    );
+  });
+
+  app.post("/api/live/poll", async (c) => {
+    await livePoller.pollNow();
+    return c.json({ ok: true });
+  });
+
+  app.get("/api/live/media", async (c) => {
+    const q = c.req.query("q")?.trim() ?? "";
+    const provider = c.req.query("provider");
+    const limit = Math.min(
+      200,
+      Number.parseInt(c.req.query("limit") ?? "50", 10) || 50,
+    );
+    const offset = Number.parseInt(c.req.query("offset") ?? "0", 10) || 0;
+
+    const conditions = [];
+    if (q) {
+      const pattern = `%${q}%`;
+      conditions.push(
+        or(like(liveMedia.title, pattern), like(liveMedia.authorName, pattern)),
+      );
+    }
+    if (provider) conditions.push(eq(liveMedia.provider, provider));
+
+    const where =
+      conditions.length === 0
+        ? undefined
+        : conditions.length === 1
+          ? conditions[0]
+          : and(...conditions);
+
+    const query = db.select().from(liveMedia).orderBy(desc(liveMedia.updatedAt));
+    const rows = where
+      ? await query.where(where).limit(limit).offset(offset)
+      : await query.limit(limit).offset(offset);
+
+    return c.json(rows.map(toLiveMedia));
+  });
+
+  app.get("/api/live/media/:provider/:roomId/audio", async (c) => {
+    const provider = c.req.param("provider") as ProviderId;
+    const roomId = c.req.param("roomId");
+    const [row] = await db
+      .select()
+      .from(liveMedia)
+      .where(and(eq(liveMedia.provider, provider), eq(liveMedia.roomId, roomId)))
+      .limit(1);
+    if (!row) return c.json({ error: "Not found" }, 404);
+    const audioPath = path.join(config.mediaDir, row.mediaRelPath);
+    if (!(await pathExists(audioPath))) {
+      return c.json({ error: "Audio file missing" }, 404);
+    }
+    const st = statSync(audioPath);
+    const size = st.size;
+    const range = c.req.header("range");
+    const contentType =
+      row.audioExt === "wav"
+        ? "audio/wav"
+        : row.audioExt === "mp3"
+          ? "audio/mpeg"
+          : row.audioExt === "m4a"
+            ? "audio/mp4"
+            : "application/octet-stream";
+
+    if (range) {
+      const m = /bytes=(\d+)-(\d*)/.exec(range);
+      if (m) {
+        const start = Number.parseInt(m[1] ?? "0", 10);
+        const end = m[2] ? Number.parseInt(m[2], 10) : size - 1;
+        if (start >= size || end >= size || start > end) {
+          return c.body(null, 416, {
+            "Content-Range": `bytes */${size}`,
+          });
+        }
+        const chunkSize = end - start + 1;
+        const stream = createReadStream(audioPath, { start, end });
+        return c.body(Readable.toWeb(stream) as ReadableStream, 206, {
+          "Content-Range": `bytes ${start}-${end}/${size}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": String(chunkSize),
+          "Content-Type": contentType,
+        });
+      }
+    }
+
+    const stream = createReadStream(audioPath);
+    return c.body(Readable.toWeb(stream) as ReadableStream, 200, {
+      "Content-Length": String(size),
+      "Accept-Ranges": "bytes",
+      "Content-Type": contentType,
+    });
   });
 
   // SPA static (production)
