@@ -5,16 +5,23 @@ WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
 
 FROM base AS deps
-COPY package.json pnpm-workspace.yaml tsconfig.base.json ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/server/package.json apps/server/
 COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile=false
+RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
-COPY packages/shared packages/shared
-COPY apps/server apps/server
-COPY apps/web apps/web
+# Copy only sources so package-level node_modules (workspace links) stay intact
+COPY packages/shared/src packages/shared/src
+COPY packages/shared/tsconfig.json packages/shared/
+COPY apps/server/src apps/server/src
+COPY apps/server/tsconfig.json apps/server/
+COPY apps/web/src apps/web/src
+COPY apps/web/index.html apps/web/
+COPY apps/web/public apps/web/public
+COPY apps/web/tsconfig.json apps/web/
+COPY apps/web/vite.config.ts apps/web/
 RUN pnpm --filter @erolib/shared build \
   && pnpm --filter @erolib/web build \
   && pnpm --filter @erolib/server build
