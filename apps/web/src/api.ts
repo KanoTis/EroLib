@@ -1,6 +1,11 @@
 import type {
   DownloadJobPublic,
   HealthResponse,
+  LiveFolloweeHistoryPublic,
+  LiveMediaPublic,
+  LiveOnairPublic,
+  LiveRecordJobPublic,
+  LiveSubscriptionPublic,
   ProviderAccountPublic,
   SettingsPublic,
   SyncRunPublic,
@@ -103,6 +108,54 @@ export const api = {
       { method: "POST" },
     ),
   jobs: () => request<DownloadJobPublic[]>("/api/jobs"),
+  liveSubscriptions: () =>
+    request<LiveSubscriptionPublic[]>("/api/live/subscriptions"),
+  addLiveSubscription: (input: string) =>
+    request<LiveSubscriptionPublic>("/api/live/subscriptions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input }),
+    }),
+  patchLiveSubscription: (id: number, body: { enabled?: boolean }) =>
+    request<LiveSubscriptionPublic>(`/api/live/subscriptions/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  deleteLiveSubscription: (id: number) =>
+    request<{ ok: boolean }>(`/api/live/subscriptions/${id}`, {
+      method: "DELETE",
+    }),
+  liveFollowees: () => request<LiveOnairPublic[]>("/api/live/followees"),
+  liveFolloweeHistory: () =>
+    request<LiveFolloweeHistoryPublic>("/api/live/followees/history"),
+  syncLiveFolloweeHistory: () =>
+    request<{
+      ok: boolean;
+      syncedAt: string | null;
+      lastError: string | null;
+      syncing: boolean;
+    }>("/api/live/followees/history/sync", { method: "POST" }),
+  selectLiveFollowee: (authorId: string) =>
+    request<LiveSubscriptionPublic>(
+      `/api/live/followees/${encodeURIComponent(authorId)}/select`,
+      { method: "POST" },
+    ),
+  liveJobs: () => request<LiveRecordJobPublic[]>("/api/live/jobs"),
+  livePoll: () =>
+    request<{ ok: boolean }>("/api/live/poll", { method: "POST" }),
+  liveMedia: (params?: { q?: string; provider?: string; limit?: number }) => {
+    const sp = new URLSearchParams();
+    if (params?.q) sp.set("q", params.q);
+    if (params?.provider) sp.set("provider", params.provider);
+    if (params?.limit) sp.set("limit", String(params.limit));
+    const qs = sp.toString();
+    return request<LiveMediaPublic[]>(
+      `/api/live/media${qs ? `?${qs}` : ""}`,
+    );
+  },
+  liveAudioUrl: (provider: string, roomId: string) =>
+    `/api/live/media/${encodeURIComponent(provider)}/${encodeURIComponent(roomId)}/audio`,
   audioUrl: (provider: string, workId: string) =>
     `/api/works/${provider}/${workId}/audio`,
   coverUrl: (provider: string, workId: string) =>
