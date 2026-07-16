@@ -12,16 +12,11 @@ COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile
 
 FROM deps AS build
-# Copy only sources so package-level node_modules (workspace links) stay intact
-COPY packages/shared/src packages/shared/src
-COPY packages/shared/tsconfig.json packages/shared/
-COPY apps/server/src apps/server/src
-COPY apps/server/tsconfig.json apps/server/
-COPY apps/web/src apps/web/src
-COPY apps/web/index.html apps/web/
-COPY apps/web/public apps/web/public
-COPY apps/web/tsconfig.json apps/web/
-COPY apps/web/vite.config.ts apps/web/
+# .dockerignore excludes **/node_modules and **/dist, so package-level
+# workspace links created by pnpm install remain after these COPY steps.
+COPY packages/shared packages/shared
+COPY apps/server apps/server
+COPY apps/web apps/web
 RUN pnpm --filter @erolib/shared build \
   && pnpm --filter @erolib/web build \
   && pnpm --filter @erolib/server build
@@ -47,9 +42,7 @@ COPY package.json pnpm-workspace.yaml ./
 COPY packages/shared/package.json packages/shared/
 COPY apps/server/package.json apps/server/
 COPY --from=build /app/packages/shared/dist packages/shared/dist
-COPY --from=build /app/packages/shared/package.json packages/shared/package.json
 COPY --from=build /app/apps/server/dist apps/server/dist
-COPY --from=build /app/apps/server/package.json apps/server/package.json
 COPY --from=build /app/apps/web/dist apps/web/dist
 COPY --from=deps /app/node_modules node_modules
 COPY --from=deps /app/apps/server/node_modules apps/server/node_modules
