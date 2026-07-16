@@ -133,7 +133,7 @@ export function ProvidersPage() {
                   enabled: true,
                 })
                 .then(async () => {
-                  setMsg("已保存（凭证已加密）");
+                  setMsg("已保存并验证通过");
                   setPassword("");
                   setCookieHeader("");
                   await load();
@@ -145,7 +145,7 @@ export function ProvidersPage() {
             }}
           >
             {saving ? <span className="spinner" /> : null}
-            保存
+            {saving ? "验证中…" : "保存"}
           </button>
         </div>
       </section>

@@ -136,6 +136,22 @@ function toPublicAccount(
   };
 }
 
+async function verifyProviderCredentials(
+  providerId: ProviderId,
+  auth: ProviderAuth,
+): Promise<{ session: Session } | { error: string }> {
+  try {
+    const provider = getProvider(providerId);
+    const session = await provider.login(auth);
+    if (!(await provider.isSessionValid(session))) {
+      return { error: "Session invalid after login" };
+    }
+    return { session };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 function sourceUrlFromMeta(metaJson: string | null, provider: ProviderId, workId: string): string | null {
   if (metaJson) {
     try {
@@ -332,6 +348,15 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     if (data.authMode === "cookie" && !data.cookieHeader) {
       return c.json({ error: "cookieHeader required" }, 400);
     }
+    const verified = await verifyProviderCredentials(data.provider, {
+      mode: payload.mode,
+      username: payload.username,
+      password: payload.password,
+      cookieHeader: payload.cookieHeader,
+    });
+    if ("error" in verified) {
+      return c.json({ error: verified.error }, 400);
+    }
     const encrypted = encryptJson(config.credentialsSecret, payload);
     try {
       const [row] = await db
@@ -342,7 +367,9 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
           authMode: data.authMode,
           username: data.username ?? null,
           encryptedPayload: JSON.stringify(encrypted),
-          status: "unknown",
+          sessionBlob: JSON.stringify(verified.session),
+          status: "ok",
+          statusMessage: null,
         })
         .returning();
       if (!row) return c.json({ error: "Insert failed" }, 500);
@@ -369,52 +396,69 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       .limit(1);
     if (!existing) return c.json({ error: "Not found" }, 404);
 
-    let encryptedPayload = existing.encryptedPayload;
-    let authMode = existing.authMode;
-    let username = existing.username;
+    const credentialChange =
+      Boolean(parsed.data.authMode) ||
+      Boolean(parsed.data.password) ||
+      Boolean(parsed.data.cookieHeader) ||
+      parsed.data.username !== undefined;
 
-    if (
-      parsed.data.authMode ||
-      parsed.data.password ||
-      parsed.data.cookieHeader ||
-      parsed.data.username !== undefined
-    ) {
-      let current: CredentialPayload = {
-        mode: existing.authMode as AuthMode,
-      };
-      try {
-        const raw: unknown = JSON.parse(existing.encryptedPayload);
-        if (raw && typeof raw === "object" && "v" in raw && "data" in raw) {
-          current = decryptJson<CredentialPayload>(
-            config.credentialsSecret,
-            raw as EncryptedBlob,
-          );
-        }
-      } catch {
-        // replace
+    if (!credentialChange) {
+      const [row] = await db
+        .update(providerAccounts)
+        .set({
+          enabled: parsed.data.enabled ?? existing.enabled,
+          updatedAt: new Date().toISOString(),
+        })
+        .where(eq(providerAccounts.id, id))
+        .returning();
+      if (!row) return c.json({ error: "Update failed" }, 500);
+      return c.json(toPublicAccount(row, config.credentialsSecret));
+    }
+
+    let current: CredentialPayload = {
+      mode: existing.authMode as AuthMode,
+    };
+    try {
+      const raw: unknown = JSON.parse(existing.encryptedPayload);
+      if (raw && typeof raw === "object" && "v" in raw && "data" in raw) {
+        current = decryptJson<CredentialPayload>(
+          config.credentialsSecret,
+          raw as EncryptedBlob,
+        );
       }
-      const next: CredentialPayload = {
-        mode: (parsed.data.authMode ?? current.mode) as AuthMode,
-        username: parsed.data.username ?? current.username,
-        password: parsed.data.password ?? current.password,
-        cookieHeader: parsed.data.cookieHeader ?? current.cookieHeader,
-      };
-      authMode = next.mode;
-      username = next.username ?? null;
-      encryptedPayload = JSON.stringify(
-        encryptJson(config.credentialsSecret, next),
-      );
+    } catch {
+      // replace
+    }
+    const next: CredentialPayload = {
+      mode: (parsed.data.authMode ?? current.mode) as AuthMode,
+      username: parsed.data.username ?? current.username,
+      password: parsed.data.password ?? current.password,
+      cookieHeader: parsed.data.cookieHeader ?? current.cookieHeader,
+    };
+    const verified = await verifyProviderCredentials(
+      existing.provider as ProviderId,
+      {
+        mode: next.mode,
+        username: next.username,
+        password: next.password,
+        cookieHeader: next.cookieHeader,
+      },
+    );
+    if ("error" in verified) {
+      return c.json({ error: verified.error }, 400);
     }
 
     const [row] = await db
       .update(providerAccounts)
       .set({
         enabled: parsed.data.enabled ?? existing.enabled,
-        authMode,
-        username,
-        encryptedPayload,
-        sessionBlob: null,
-        status: "unknown",
+        authMode: next.mode,
+        username: next.username ?? null,
+        encryptedPayload: JSON.stringify(
+          encryptJson(config.credentialsSecret, next),
+        ),
+        sessionBlob: JSON.stringify(verified.session),
+        status: "ok",
         statusMessage: null,
         updatedAt: new Date().toISOString(),
       })
@@ -449,24 +493,36 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
         config.credentialsSecret,
         raw as EncryptedBlob,
       );
-      const provider = getProvider(account.provider as ProviderId);
-      const session = await provider.login({
-        mode: payload.mode,
-        username: payload.username,
-        password: payload.password,
-        cookieHeader: payload.cookieHeader,
-      });
-      const valid = await provider.isSessionValid(session);
+      const verified = await verifyProviderCredentials(
+        account.provider as ProviderId,
+        {
+          mode: payload.mode,
+          username: payload.username,
+          password: payload.password,
+          cookieHeader: payload.cookieHeader,
+        },
+      );
+      if ("error" in verified) {
+        await db
+          .update(providerAccounts)
+          .set({
+            status: "error",
+            statusMessage: verified.error,
+            updatedAt: new Date().toISOString(),
+          })
+          .where(eq(providerAccounts.id, id));
+        return c.json({ ok: false, error: verified.error }, 400);
+      }
       await db
         .update(providerAccounts)
         .set({
-          sessionBlob: JSON.stringify(session),
-          status: valid ? "ok" : "error",
-          statusMessage: valid ? null : "Session invalid after login",
+          sessionBlob: JSON.stringify(verified.session),
+          status: "ok",
+          statusMessage: null,
           updatedAt: new Date().toISOString(),
         })
         .where(eq(providerAccounts.id, id));
-      return c.json({ ok: valid });
+      return c.json({ ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       await db
