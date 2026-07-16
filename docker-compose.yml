@@ -1,6 +1,9 @@
 services:
   app:
-    build: .
+    image: ghcr.io/kanotis/erolib:latest
+    # 本地改源码构建时改用：
+    # build: .
+    # image: erolib:local
     ports:
       - "8080:8080"
     environment:

@@ -8,10 +8,17 @@ Docker 自托管：备份 Otobanana / Koe-koe / Erovoice 收藏到本地，浏�
 # 修改 docker-compose.yml 中的 CREDENTIALS_SECRET（必填，≥16 字符）
 # 可选设置 AUTH_PASSWORD 启用本机登录
 
-docker compose up --build -d
+# 私有包需先登录 GHCR（token 需 read:packages）
+# echo YOUR_PAT | docker login ghcr.io -u KanoTis --password-stdin
+
+docker compose pull
+docker compose up -d
 curl -sS http://localhost:8080/api/health
 # 浏览器打开 http://localhost:8080
 ```
+
+默认镜像：`ghcr.io/kanotis/erolib:latest`（由 GitHub Actions 推送）。
+本地改源码构建时，在 `docker-compose.yml` 改回 `build: .`。
 
 卷挂载：
 
