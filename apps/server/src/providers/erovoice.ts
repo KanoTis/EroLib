@@ -158,51 +158,85 @@ function absolutizeUrl(raw: string): string {
   return new URL(raw, BASE).href;
 }
 
-/** Prefer full-res cover; never use site chrome og:image fallbacks. */
+/** Site chrome / default icons — never use as work cover. */
+export function isRejectedCoverUrl(url: string): boolean {
+  const lower = url.toLowerCase();
+  return (
+    /\/top2\.png(?:\?|$)/i.test(lower) ||
+    /img_siterogo/i.test(lower) ||
+    /bg_(?:menu|mypage|notification|timeline)/i.test(lower) ||
+    /ico_bookmark/i.test(lower) ||
+    /\/favicon/i.test(lower) ||
+    /apple-touch-icon/i.test(lower)
+  );
+}
+
+function isUploadImageUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    if (
+      host !== "data.erovoice-ch.com" &&
+      host !== "erovoice-ch.com" &&
+      host !== "www.erovoice-ch.com"
+    ) {
+      return false;
+    }
+    return /\/wp-content\/uploads\//i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function pushCoverCandidate(out: string[], raw: string | undefined): void {
+  if (!raw?.trim()) return;
+  const abs = preferOriginalImageUrl(absolutizeUrl(raw.trim()));
+  if (!isUploadImageUrl(abs)) return;
+  if (isRejectedCoverUrl(abs)) return;
+  if (!out.includes(abs)) out.push(abs);
+}
+
+/**
+ * Prefer full-res work cover from detail HTML.
+ * Covers may live on either erovoice-ch.com or data.erovoice-ch.com.
+ * Never fall back to arbitrary first CDN image (often default headphones icon).
+ */
 export function extractCoverUrl(html: string): string | null {
   const candidates: string[] = [];
 
-  const filterBg =
-    /id=["']voiceImagePreview["'][\s\S]{0,1200}?filterImage[^>]*style=["'][^"']*background-image\s*:\s*url\((['"]?)([^'")]+)\1\)/i.exec(
+  const filterInPreview =
+    /id=["']voiceImagePreview["'][\s\S]{0,2000}?filterImage[^>]*style=["'][^"']*background-image\s*:\s*url\((['"]?)([^'")]+)\1\)/i.exec(
       html,
-    ) ??
+    );
+  pushCoverCandidate(candidates, filterInPreview?.[2]);
+
+  const filterAny =
     /filterImage[^>]*style=["'][^"']*background-image\s*:\s*url\((['"]?)([^'")]+)\1\)/i.exec(
       html,
     );
-  if (filterBg?.[2]) candidates.push(filterBg[2]);
+  pushCoverCandidate(candidates, filterAny?.[2]);
 
   const previewImg =
-    /id=["']voiceImagePreview["'][\s\S]{0,1200}?<img[^>]+src=["']([^"']+)["']/i.exec(
+    /id=["']voiceImagePreview["'][\s\S]{0,2000}?<img[^>]+src=["']([^"']+)["']/i.exec(
       html,
     );
-  if (previewImg?.[1]) candidates.push(previewImg[1]);
+  pushCoverCandidate(candidates, previewImg?.[1]);
 
-  const postImg =
-    /class=["'][^"']*postImage[^"']*["'][\s\S]{0,400}?<img[^>]+src=["']([^"']+)["']/i.exec(
-      html,
-    ) ??
+  const smallImg =
     /class=["'][^"']*audioSmallImage[^"']*["'][^>]+src=["']([^"']+)["']/i.exec(
       html,
-    );
-  if (postImg?.[1]) candidates.push(postImg[1]);
-
-  // data.erovoice CDN uploads only — skip site chrome under erovoice-ch.com/wp-content
-  for (const raw of candidates) {
-    const abs = absolutizeUrl(raw.trim());
-    if (!/data\.erovoice-ch\.com/i.test(abs)) continue;
-    if (/\/wp-content\/uploads\//i.test(abs)) {
-      return preferOriginalImageUrl(abs);
-    }
-  }
-
-  // Last resort: first data.erovoice uploads URL in page (still strip sizes)
-  const anyCdn =
-    /https?:\/\/data\.erovoice-ch\.com\/wp-content\/uploads\/[^"'\\s>]+\.(?:jpe?g|png|webp|gif)/i.exec(
+    ) ??
+    /class=["'][^"']*postImage[^"']*["'][\s\S]{0,400}?<img[^>]+src=["']([^"']+)["']/i.exec(
       html,
     );
-  if (anyCdn?.[0]) return preferOriginalImageUrl(anyCdn[0]);
+  pushCoverCandidate(candidates, smallImg?.[1]);
 
-  return null;
+  const og =
+    /property=["']og:image["'][^>]*content=["']([^"']+)["']/i.exec(html) ??
+    /content=["']([^"']+)["'][^>]*property=["']og:image["']/i.exec(html);
+  pushCoverCandidate(candidates, og?.[1]);
+
+  return candidates[0] ?? null;
 }
 
 

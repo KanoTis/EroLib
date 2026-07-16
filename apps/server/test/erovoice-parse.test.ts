@@ -49,13 +49,13 @@ describe("erovoice cover urls", () => {
     );
     assert.equal(
       preferOriginalImageUrl(
-        "https://data.erovoice-ch.com/wp-content/uploads/2026/02/foo-100x100.webp?x=1",
+        "https://erovoice-ch.com/wp-content/uploads/2022/03/foo.jpg-e164-232x150.webp",
       ),
-      "https://data.erovoice-ch.com/wp-content/uploads/2026/02/foo.webp?x=1",
+      "https://erovoice-ch.com/wp-content/uploads/2022/03/foo.jpg-e164.webp",
     );
   });
 
-  it("prefers filterImage original over thumbnail img", () => {
+  it("prefers filterImage original on CDN", () => {
     const html = `
       <div id="voiceImagePreview">
         <div class="filterImage" style="background-image:url('https://data.erovoice-ch.com/wp-content/uploads/2026/02/2026021123134720260211_231136.webp');"></div>
@@ -67,6 +67,29 @@ describe("erovoice cover urls", () => {
       extractCoverUrl(html),
       "https://data.erovoice-ch.com/wp-content/uploads/2026/02/2026021123134720260211_231136.webp",
     );
+  });
+
+  it("accepts cover on main domain erovoice-ch.com uploads", () => {
+    const html = `
+      <div id="voiceImagePreview">
+        <div class="filterImage" style="background-image:url('https://erovoice-ch.com/wp-content/uploads/2022/03/20130510b03314534056811585.jpg-e1648512435263.webp');"></div>
+        <img class="audioSmallImage" src="https://erovoice-ch.com/wp-content/uploads/2022/03/20130510b03314534056811585.jpg-e1648512435263-232x150.webp" />
+      </div>
+      <img src="https://data.erovoice-ch.com/wp-content/uploads/2026/06/4595fc16f31dc8244aaf58d23efa9700.webp" />
+      <meta property="og:image" content="https://erovoice-ch.com/wp-content/uploads/2025/06/top2.png" />
+    `;
+    assert.equal(
+      extractCoverUrl(html),
+      "https://erovoice-ch.com/wp-content/uploads/2022/03/20130510b03314534056811585.jpg-e1648512435263.webp",
+    );
+  });
+
+  it("does not use site top2.png as cover", () => {
+    const html = `
+      <meta property="og:image" content="https://erovoice-ch.com/wp-content/uploads/2025/06/top2.png" />
+      <img src="https://erovoice-ch.com/wp-content/uploads/2025/06/img_siterogo.png" />
+    `;
+    assert.equal(extractCoverUrl(html), null);
   });
 });
 
