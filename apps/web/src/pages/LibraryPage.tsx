@@ -4,7 +4,6 @@ import type { LiveMediaPublic, WorkPublic } from "@erolib/shared";
 import { api } from "../api";
 import { WorkCover } from "../components/WorkCover";
 import {
-  IconClose,
   IconPlay,
   IconSearch,
   IconViewList,
@@ -12,6 +11,8 @@ import {
   IconViewStandard,
   IconWave,
 } from "../components/Icons";
+import { usePlayer } from "../player/PlayerContext";
+import type { PlayableTrack } from "../player/types";
 
 const STATUS_LABEL: Record<string, string> = {
   downloaded: "已下载",
@@ -23,10 +24,6 @@ const STATUS_LABEL: Record<string, string> = {
 
 type LibraryViewMode = "small" | "standard" | "list";
 type KindFilter = "all" | "vod" | "live";
-
-type PlayingItem =
-  | { kind: "vod"; title: string; provider: string; workId: string }
-  | { kind: "live"; title: string; provider: string; roomId: string };
 
 type LibraryItem =
   | {
@@ -90,6 +87,7 @@ function parseKind(raw: string | null): KindFilter {
 }
 
 export function LibraryPage() {
+  const { play } = usePlayer();
   const [searchParams, setSearchParams] = useSearchParams();
   const [works, setWorks] = useState<WorkPublic[]>([]);
   const [liveItems, setLiveItems] = useState<LiveMediaPublic[]>([]);
@@ -101,10 +99,32 @@ export function LibraryPage() {
   );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [playing, setPlaying] = useState<PlayingItem | null>(null);
   const [viewMode, setViewMode] = useState<LibraryViewMode>(() =>
     readViewMode(),
   );
+
+  function playVod(w: WorkPublic): void {
+    const track: PlayableTrack = {
+      id: `vod:${w.provider}:${w.workId}`,
+      kind: "vod",
+      title: w.title,
+      subtitle: w.authorName ?? w.authorId ?? undefined,
+      src: api.audioUrl(w.provider, w.workId),
+      artworkUrl: w.coverPath ? api.coverUrl(w.provider, w.workId) : null,
+    };
+    play(track);
+  }
+
+  function playLive(m: LiveMediaPublic, title: string): void {
+    const track: PlayableTrack = {
+      id: `live:${m.provider}:${m.roomId}`,
+      kind: "live",
+      title,
+      subtitle: m.authorName ?? m.authorId ?? undefined,
+      src: api.liveAudioUrl(m.provider, m.roomId),
+    };
+    play(track);
+  }
 
   async function load(): Promise<void> {
     try {
@@ -195,7 +215,7 @@ export function LibraryPage() {
           </p>
         </div>
         <div className="toolbar">
-          <label className="field" style={{ minWidth: 220 }}>
+          <label className="field toolbar-search">
             <span className="sr-only">搜索</span>
             <input
               placeholder="搜索标题 / 作者"
@@ -211,7 +231,7 @@ export function LibraryPage() {
             value={kind}
             onChange={(e) => changeKind(parseKind(e.target.value))}
             aria-label="按类型筛选"
-            style={{ width: "auto", minWidth: 120 }}
+            className="toolbar-select"
           >
             <option value="all">全部类型</option>
             <option value="vod">点播</option>
@@ -221,7 +241,7 @@ export function LibraryPage() {
             value={provider}
             onChange={(e) => setProvider(e.target.value)}
             aria-label="按渠道筛选"
-            style={{ width: "auto", minWidth: 140 }}
+            className="toolbar-select toolbar-select--md"
           >
             <option value="">全部渠道</option>
             <option value="otobanana">Otobanana</option>
@@ -233,7 +253,7 @@ export function LibraryPage() {
               value={status}
               onChange={(e) => setStatus(e.target.value)}
               aria-label="按状态筛选"
-              style={{ width: "auto", minWidth: 140 }}
+              className="toolbar-select toolbar-select--md"
             >
               <option value="">全部状态</option>
               <option value="downloaded">已下载</option>
@@ -338,14 +358,7 @@ export function LibraryPage() {
                         <span className="badge queued">直播</span>
                         <button
                           type="button"
-                          onClick={() =>
-                            setPlaying({
-                              kind: "live",
-                              title,
-                              provider: m.provider,
-                              roomId: m.roomId,
-                            })
-                          }
+                          onClick={() => playLive(m, title)}
                         >
                           <IconPlay width={14} height={14} />
                           播放
@@ -366,14 +379,7 @@ export function LibraryPage() {
                         <span className="badge queued">直播</span>
                         <button
                           type="button"
-                          onClick={() =>
-                            setPlaying({
-                              kind: "live",
-                              title,
-                              provider: m.provider,
-                              roomId: m.roomId,
-                            })
-                          }
+                          onClick={() => playLive(m, title)}
                         >
                           <IconPlay width={14} height={14} />
                           播放
@@ -428,14 +434,7 @@ export function LibraryPage() {
                       {w.status === "downloaded" ? (
                         <button
                           type="button"
-                          onClick={() =>
-                            setPlaying({
-                              kind: "vod",
-                              title: w.title,
-                              provider: w.provider,
-                              workId: w.workId,
-                            })
-                          }
+                          onClick={() => playVod(w)}
                         >
                           <IconPlay width={14} height={14} />
                           播放
@@ -465,14 +464,7 @@ export function LibraryPage() {
                       {w.status === "downloaded" ? (
                         <button
                           type="button"
-                          onClick={() =>
-                            setPlaying({
-                              kind: "vod",
-                              title: w.title,
-                              provider: w.provider,
-                              workId: w.workId,
-                            })
-                          }
+                          onClick={() => playVod(w)}
                         >
                           <IconPlay width={14} height={14} />
                           播放
@@ -489,33 +481,6 @@ export function LibraryPage() {
         </div>
       )}
 
-      {playing ? (
-        <div className="player" role="region" aria-label="播放器">
-          <div className="player-top">
-            <div className="player-title">
-              正在播放：{playing.title}
-              {playing.kind === "live" ? " · 直播" : ""}
-            </div>
-            <button
-              type="button"
-              className="ghost icon-btn"
-              aria-label="关闭播放器"
-              onClick={() => setPlaying(null)}
-            >
-              <IconClose width={16} height={16} />
-            </button>
-          </div>
-          <audio
-            controls
-            autoPlay
-            src={
-              playing.kind === "live"
-                ? api.liveAudioUrl(playing.provider, playing.roomId)
-                : api.audioUrl(playing.provider, playing.workId)
-            }
-          />
-        </div>
-      ) : null}
     </div>
   );
 }

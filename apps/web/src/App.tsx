@@ -11,6 +11,8 @@ import {
   IconSettings,
   IconWave,
 } from "./components/Icons";
+import { PlayerBar } from "./components/PlayerBar";
+import { PlayerProvider, usePlayer } from "./player/PlayerContext";
 import { JobsPage } from "./pages/JobsPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { LivePage } from "./pages/LivePage";
@@ -68,7 +70,35 @@ export function App() {
   }
 
   return (
-    <div className="layout">
+    <PlayerProvider>
+      <AuthenticatedShell
+        authEnabled={authEnabled}
+        navOpen={navOpen}
+        setNavOpen={setNavOpen}
+        onLogout={() => {
+          void api.logout().then(() => refreshAuth());
+        }}
+      />
+    </PlayerProvider>
+  );
+}
+
+function AuthenticatedShell({
+  authEnabled,
+  navOpen,
+  setNavOpen,
+  onLogout,
+}: {
+  authEnabled: boolean;
+  navOpen: boolean;
+  setNavOpen: (open: boolean) => void;
+  onLogout: () => void;
+}) {
+  const location = useLocation();
+  const { track } = usePlayer();
+
+  return (
+    <div className={track ? "layout layout--player-open" : "layout"}>
       {navOpen ? (
         <button
           type="button"
@@ -112,13 +142,7 @@ export function App() {
 
         <div className="sidebar-footer">
           {authEnabled ? (
-            <button
-              className="ghost"
-              type="button"
-              onClick={() => {
-                void api.logout().then(() => refreshAuth());
-              }}
-            >
+            <button className="ghost" type="button" onClick={onLogout}>
               <IconLogout width={16} height={16} />
               退出登录
             </button>
@@ -156,6 +180,8 @@ export function App() {
           </Routes>
         </main>
       </div>
+
+      <PlayerBar />
     </div>
   );
 }

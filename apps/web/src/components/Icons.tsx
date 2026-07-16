@@ -61,6 +61,34 @@ export function IconPlay(props: IconProps) {
   );
 }
 
+export function IconPause(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <rect x="6.5" y="5.5" width="3.5" height="13" rx="0.8" fill="currentColor" stroke="none" />
+      <rect x="14" y="5.5" width="3.5" height="13" rx="0.8" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}
+
+export function IconVolume(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 10h3.2L12 6.5v11L7.2 14H4v-4Z" fill="currentColor" stroke="none" />
+      <path d="M15 9.2a3.2 3.2 0 0 1 0 5.6" />
+      <path d="M17.2 7a5.5 5.5 0 0 1 0 10" />
+    </svg>
+  );
+}
+
+export function IconVolumeMute(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M4 10h3.2L12 6.5v11L7.2 14H4v-4Z" fill="currentColor" stroke="none" />
+      <path d="M16 10l4 4M20 10l-4 4" />
+    </svg>
+  );
+}
+
 export function IconSearch(props: IconProps) {
   return (
     <svg {...base(props)}>

@@ -9,9 +9,11 @@ import type {
   LiveSubscriptionPublic,
 } from "@erolib/shared";
 import { api } from "../api";
-import { IconClose, IconPlay, IconRefresh } from "../components/Icons";
+import { IconPlay, IconRefresh } from "../components/Icons";
+import { usePlayer } from "../player/PlayerContext";
 
 export function LivePage() {
+  const { play } = usePlayer();
   const [subs, setSubs] = useState<LiveSubscriptionPublic[]>([]);
   const [followees, setFollowees] = useState<LiveOnairPublic[]>([]);
   const [history, setHistory] = useState<LiveFolloweeAuthorPublic[]>([]);
@@ -27,11 +29,6 @@ export function LivePage() {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historySyncing, setHistorySyncing] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [playing, setPlaying] = useState<{
-    title: string;
-    provider: string;
-    roomId: string;
-  } | null>(null);
 
   async function loadCore(): Promise<void> {
     const [s, j] = await Promise.all([
@@ -638,10 +635,16 @@ export function LivePage() {
                             <button
                               type="button"
                               onClick={() =>
-                                setPlaying({
+                                play({
+                                  id: `live:${j.provider}:${j.roomId}`,
+                                  kind: "live",
                                   title: j.title || j.roomId,
-                                  provider: j.provider,
-                                  roomId: j.roomId,
+                                  subtitle:
+                                    j.authorDisplayName ||
+                                    j.authorUsername ||
+                                    j.authorId ||
+                                    undefined,
+                                  src: api.liveAudioUrl(j.provider, j.roomId),
                                 })
                               }
                             >
@@ -667,26 +670,6 @@ export function LivePage() {
         </div>
       </section>
 
-      {playing ? (
-        <div className="player" role="region" aria-label="直播录制播放器">
-          <div className="player-top">
-            <div className="player-title">正在播放：{playing.title} · 直播</div>
-            <button
-              type="button"
-              className="ghost icon-btn"
-              aria-label="关闭播放器"
-              onClick={() => setPlaying(null)}
-            >
-              <IconClose width={16} height={16} />
-            </button>
-          </div>
-          <audio
-            controls
-            autoPlay
-            src={api.liveAudioUrl(playing.provider, playing.roomId)}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }

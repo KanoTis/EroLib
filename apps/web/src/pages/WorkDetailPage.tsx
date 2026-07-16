@@ -3,7 +3,8 @@ import { Link, useParams } from "react-router-dom";
 import type { WorkPublic } from "@erolib/shared";
 import { api } from "../api";
 import { WorkCover } from "../components/WorkCover";
-import { IconBack, IconRefresh } from "../components/Icons";
+import { IconBack, IconPlay, IconRefresh } from "../components/Icons";
+import { usePlayer } from "../player/PlayerContext";
 
 const STATUS_LABEL: Record<string, string> = {
   downloaded: "已下载",
@@ -15,6 +16,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 export function WorkDetailPage() {
   const { provider = "", workId = "" } = useParams();
+  const { play, track, status } = usePlayer();
   const [work, setWork] = useState<WorkPublic | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
@@ -147,8 +149,38 @@ export function WorkDetailPage() {
 
         {work.status === "downloaded" ? (
           <div className="detail-player">
-            <strong>本地播放</strong>
-            <audio controls src={api.audioUrl(work.provider, work.workId)} />
+            <div className="detail-player-row">
+              <strong>本地播放</strong>
+              {track?.id === `vod:${work.provider}:${work.workId}` ? (
+                <span className="badge queued">
+                  {status === "playing" || status === "loading"
+                    ? "正在播放"
+                    : status === "paused"
+                      ? "已暂停"
+                      : status === "error"
+                        ? "播放出错"
+                        : "当前曲目"}
+                </span>
+              ) : null}
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                play({
+                  id: `vod:${work.provider}:${work.workId}`,
+                  kind: "vod",
+                  title: work.title,
+                  subtitle: work.authorName ?? work.authorId ?? undefined,
+                  src: api.audioUrl(work.provider, work.workId),
+                  artworkUrl: work.coverPath
+                    ? api.coverUrl(work.provider, work.workId)
+                    : null,
+                })
+              }
+            >
+              <IconPlay width={16} height={16} />
+              播放
+            </button>
           </div>
         ) : (
           <p className="muted" style={{ marginTop: "1rem" }}>
