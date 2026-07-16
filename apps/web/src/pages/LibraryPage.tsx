@@ -379,10 +379,18 @@ export function LibraryPage() {
                         <span className="badge queued">直播</span>
                         <button
                           type="button"
+                          className={
+                            viewMode === "small"
+                              ? "play-icon-btn icon-btn"
+                              : undefined
+                          }
+                          aria-label={
+                            viewMode === "small" ? `播放 ${title}` : undefined
+                          }
                           onClick={() => playLive(m, title)}
                         >
                           <IconPlay width={14} height={14} />
-                          播放
+                          {viewMode === "small" ? null : "播放"}
                         </button>
                       </div>
                     </div>
@@ -464,10 +472,18 @@ export function LibraryPage() {
                       {w.status === "downloaded" ? (
                         <button
                           type="button"
+                          className={
+                            viewMode === "small"
+                              ? "play-icon-btn icon-btn"
+                              : undefined
+                          }
+                          aria-label={
+                            viewMode === "small" ? `播放 ${w.title}` : undefined
+                          }
                           onClick={() => playVod(w)}
                         >
                           <IconPlay width={14} height={14} />
-                          播放
+                          {viewMode === "small" ? null : "播放"}
                         </button>
                       ) : (
                         <span className="muted small">不可播</span>

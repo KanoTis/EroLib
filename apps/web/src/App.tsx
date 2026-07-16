@@ -152,7 +152,7 @@ function AuthenticatedShell({
         </div>
       </aside>
 
-      <div>
+      <div className="layout-main">
         <div className="mobile-topbar">
           <button
             type="button"
@@ -163,8 +163,8 @@ function AuthenticatedShell({
           >
             <IconMenu width={18} height={18} />
           </button>
-          <strong>Erolib</strong>
-          <span className="muted small">备份库</span>
+          <strong className="mobile-topbar-title">Erolib</strong>
+          <span className="mobile-topbar-spacer" aria-hidden />
         </div>
 
         <main id="main" className="content" key={location.pathname}>

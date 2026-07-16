@@ -54,6 +54,7 @@ function audioErrorMessage(audio: HTMLAudioElement): string {
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const trackRef = useRef<PlayableTrack | null>(null);
+  const seekQuietUntilRef = useRef(0);
 
   const [track, setTrack] = useState<PlayableTrack | null>(null);
   const [status, setStatus] = useState<PlayerStatus>("idle");
@@ -73,6 +74,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       Number.isFinite(audio.duration) && audio.duration > 0
         ? Math.max(0, Math.min(time, audio.duration))
         : Math.max(0, time);
+    // Seeking often fires waiting/stalled; suppress loading chrome briefly.
+    seekQuietUntilRef.current = Date.now() + 700;
     audio.currentTime = next;
     setCurrentTime(next);
   }, []);
@@ -192,11 +195,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
     const onWaiting = () => {
       if (!trackRef.current) return;
+      if (Date.now() < seekQuietUntilRef.current) return;
       setStatus("loading");
     };
     const onCanPlay = () => {
       if (!trackRef.current) return;
+      seekQuietUntilRef.current = 0;
       if (!audio.paused) setStatus("playing");
+    };
+    const onPlaying = () => {
+      if (!trackRef.current) return;
+      seekQuietUntilRef.current = 0;
+      setStatus("playing");
+      setError(null);
+      setMediaSessionPlaybackState("playing");
     };
     const onEnded = () => {
       setStatus("paused");
@@ -213,6 +225,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     audio.addEventListener("timeupdate", onTimeUpdate);
     audio.addEventListener("durationchange", onDurationChange);
     audio.addEventListener("play", onPlay);
+    audio.addEventListener("playing", onPlaying);
     audio.addEventListener("pause", onPause);
     audio.addEventListener("waiting", onWaiting);
     audio.addEventListener("canplay", onCanPlay);
@@ -223,6 +236,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.removeEventListener("timeupdate", onTimeUpdate);
       audio.removeEventListener("durationchange", onDurationChange);
       audio.removeEventListener("play", onPlay);
+      audio.removeEventListener("playing", onPlaying);
       audio.removeEventListener("pause", onPause);
       audio.removeEventListener("waiting", onWaiting);
       audio.removeEventListener("canplay", onCanPlay);
