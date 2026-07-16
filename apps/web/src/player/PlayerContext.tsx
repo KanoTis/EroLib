@@ -74,10 +74,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       Number.isFinite(audio.duration) && audio.duration > 0
         ? Math.max(0, Math.min(time, audio.duration))
         : Math.max(0, time);
-    // Seeking often fires waiting/stalled; suppress loading chrome briefly.
-    seekQuietUntilRef.current = Date.now() + 700;
-    audio.currentTime = next;
+    // Drag/seek fires waiting repeatedly; keep quiet until seeked settles.
+    seekQuietUntilRef.current = Date.now() + 2500;
+    try {
+      audio.currentTime = next;
+    } catch {
+      // Some browsers throw while metadata not ready.
+    }
     setCurrentTime(next);
+    // Keep playing chrome while scrubbing — do not force "loading".
+    if (!audio.paused) {
+      setStatus((s) => (s === "error" ? s : "playing"));
+    }
   }, []);
 
   const toggle = useCallback(() => {
@@ -172,6 +180,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     audio.muted = muted;
 
     const onTimeUpdate = () => {
+      // Avoid fighting the scrubber while the element is mid-seek.
+      if (audio.seeking) return;
       setCurrentTime(audio.currentTime);
     };
     const onDurationChange = () => {
@@ -182,6 +192,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       );
     };
     const onPlay = () => {
+      if (audio.seeking || Date.now() < seekQuietUntilRef.current) {
+        // Stay out of loading thrash during seek.
+        setError(null);
+        setMediaSessionPlaybackState("playing");
+        if (!audio.paused) setStatus("playing");
+        return;
+      }
       setStatus("playing");
       setError(null);
       setMediaSessionPlaybackState("playing");
@@ -190,21 +207,40 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // Ignore pause while stopping / no track
       if (!trackRef.current) return;
       if (audio.ended) return;
+      if (audio.seeking || Date.now() < seekQuietUntilRef.current) return;
       setStatus("paused");
       setMediaSessionPlaybackState("paused");
     };
     const onWaiting = () => {
       if (!trackRef.current) return;
+      // Seeking / scrub always buffers; never flash "加载中" for that.
+      if (audio.seeking) return;
       if (Date.now() < seekQuietUntilRef.current) return;
       setStatus("loading");
     };
+    const onSeeking = () => {
+      seekQuietUntilRef.current = Date.now() + 2500;
+    };
+    const onSeeked = () => {
+      seekQuietUntilRef.current = 0;
+      setCurrentTime(audio.currentTime);
+      if (!trackRef.current) return;
+      if (audio.paused) {
+        if (!audio.ended) setStatus("paused");
+      } else {
+        setStatus("playing");
+        setError(null);
+        setMediaSessionPlaybackState("playing");
+      }
+    };
     const onCanPlay = () => {
       if (!trackRef.current) return;
-      seekQuietUntilRef.current = 0;
+      if (audio.seeking) return;
       if (!audio.paused) setStatus("playing");
     };
     const onPlaying = () => {
       if (!trackRef.current) return;
+      if (audio.seeking) return;
       seekQuietUntilRef.current = 0;
       setStatus("playing");
       setError(null);
@@ -228,6 +264,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     audio.addEventListener("playing", onPlaying);
     audio.addEventListener("pause", onPause);
     audio.addEventListener("waiting", onWaiting);
+    audio.addEventListener("seeking", onSeeking);
+    audio.addEventListener("seeked", onSeeked);
     audio.addEventListener("canplay", onCanPlay);
     audio.addEventListener("ended", onEnded);
     audio.addEventListener("error", onError);
@@ -239,6 +277,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       audio.removeEventListener("playing", onPlaying);
       audio.removeEventListener("pause", onPause);
       audio.removeEventListener("waiting", onWaiting);
+      audio.removeEventListener("seeking", onSeeking);
+      audio.removeEventListener("seeked", onSeeked);
       audio.removeEventListener("canplay", onCanPlay);
       audio.removeEventListener("ended", onEnded);
       audio.removeEventListener("error", onError);
