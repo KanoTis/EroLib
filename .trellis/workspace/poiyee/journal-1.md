@@ -71,3 +71,36 @@ Implemented Erovoice Provider: WP login, SSR bookmark sync, HLS/AES download to 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: Otobanana live auto-record and media library
+
+**Date**: 2026-07-16
+**Task**: Otobanana live auto-record and media library
+**Branch**: `master`
+
+### Summary
+
+Implemented Otobanana live discovery/polling/Playwright WAV recording, followee history local cache + 30min sync, live_media under media/{provider}/live with library merge filter/play and Live page play entry; committed feat(live) and archived parent+child tasks.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5bda307` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
