@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { describe, it } from "node:test";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, it } from "node:test";
 import {
   decryptJson,
   encryptJson,
@@ -7,11 +10,13 @@ import {
   decryptString,
 } from "../src/crypto/credentials.js";
 import {
+  isLocalAudioAvailable,
   mediaWorkDir,
   resolveAuthorId,
   sanitizePathSegment,
   UNKNOWN_AUTHOR,
 } from "../src/storage/paths.js";
+
 import {
   parseBookmarkIds,
   parseDetail,
@@ -54,6 +59,93 @@ describe("media paths", () => {
     assert.ok(m.dir.replace(/\\/g, "/").endsWith("/media/koekoe/author1/123"));
     assert.ok(m.audio("mp3").endsWith("audio.mp3"));
     assert.ok(m.metaJson.endsWith("meta.json"));
+  });
+});
+
+describe("isLocalAudioAvailable", () => {
+  let mediaRoot = "";
+
+  afterEach(async () => {
+    if (mediaRoot) {
+      await rm(mediaRoot, { recursive: true, force: true });
+      mediaRoot = "";
+    }
+  });
+
+  async function setupMediaRoot(): Promise<string> {
+    mediaRoot = await mkdtemp(path.join(tmpdir(), "erolib-audio-"));
+    return mediaRoot;
+  }
+
+  it("returns true when audio exists and size > 0", async () => {
+    const root = await setupMediaRoot();
+    const relDir = path.join("koekoe", "author1", "123");
+    const dir = path.join(root, relDir);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "audio.mp3"), "not-empty");
+
+    assert.equal(
+      await isLocalAudioAvailable(root, {
+        mediaRelDir: relDir,
+        audioExt: "mp3",
+      }),
+      true,
+    );
+  });
+
+  it("returns false when audio is missing", async () => {
+    const root = await setupMediaRoot();
+    const relDir = path.join("koekoe", "author1", "123");
+    await mkdir(path.join(root, relDir), { recursive: true });
+
+    assert.equal(
+      await isLocalAudioAvailable(root, {
+        mediaRelDir: relDir,
+        audioExt: "mp3",
+      }),
+      false,
+    );
+  });
+
+  it("returns false for zero-byte audio", async () => {
+    const root = await setupMediaRoot();
+    const relDir = path.join("koekoe", "author1", "123");
+    const dir = path.join(root, relDir);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "audio.mp3"), "");
+
+    assert.equal(
+      await isLocalAudioAvailable(root, {
+        mediaRelDir: relDir,
+        audioExt: "mp3",
+      }),
+      false,
+    );
+  });
+
+  it("returns false when mediaRelDir or audioExt is missing", async () => {
+    const root = await setupMediaRoot();
+    assert.equal(
+      await isLocalAudioAvailable(root, {
+        mediaRelDir: null,
+        audioExt: "mp3",
+      }),
+      false,
+    );
+    assert.equal(
+      await isLocalAudioAvailable(root, {
+        mediaRelDir: "koekoe/a/1",
+        audioExt: null,
+      }),
+      false,
+    );
+    assert.equal(
+      await isLocalAudioAvailable(root, {
+        mediaRelDir: "",
+        audioExt: "mp3",
+      }),
+      false,
+    );
   });
 });
 

@@ -166,6 +166,32 @@ export async function pathExists(p: string): Promise<boolean> {
   }
 }
 
+/** Fields needed to resolve a VOD work's local audio file. */
+export interface LocalAudioWorkRef {
+  mediaRelDir: string | null | undefined;
+  audioExt: string | null | undefined;
+}
+
+/**
+ * True when the VOD audio file is present on disk with size > 0.
+ * Missing mediaRelDir/audioExt, missing path, stat failure, or 0-byte → false.
+ */
+export async function isLocalAudioAvailable(
+  mediaRoot: string,
+  work: LocalAudioWorkRef,
+): Promise<boolean> {
+  if (!work.mediaRelDir || !work.audioExt) return false;
+  const ext = work.audioExt.replace(/^\./, "");
+  if (!ext) return false;
+  const audioPath = path.join(mediaRoot, work.mediaRelDir, `audio.${ext}`);
+  try {
+    const st = await stat(audioPath);
+    return st.size > 0;
+  } catch {
+    return false;
+  }
+}
+
 export async function cleanupCacheJob(
   cacheRoot: string,
   jobId: number,

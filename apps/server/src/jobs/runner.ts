@@ -28,11 +28,13 @@ import {
   cleanupCacheJob,
   commitCacheToMedia,
   ensureDir,
+  isLocalAudioAvailable,
   mediaWorkDir,
   pathExists,
   resolveAuthorId,
   writeJsonAtomic,
 } from "../storage/paths.js";
+
 import { fetchToFile } from "../providers/download-utils.js";
 
 export interface JobRunner {
@@ -135,7 +137,12 @@ export function createJobRunner(
   }
 
   async function enqueueDownload(work: WorkRow): Promise<boolean> {
-    if (work.status === "downloaded") return false;
+    if (work.status === "downloaded") {
+      // Re-enqueue only when the local audio is missing or empty.
+      if (await isLocalAudioAvailable(config.mediaDir, work)) {
+        return false;
+      }
+    }
     const open = await db
       .select()
       .from(downloadJobs)
@@ -204,9 +211,7 @@ export function createJobRunner(
               updatedAt: nowSql(),
             })
             .where(eq(works.id, existing[0].id));
-          if (existing[0].status !== "downloaded") {
-            if (await enqueueDownload(existing[0])) enqueued += 1;
-          }
+          if (await enqueueDownload(existing[0])) enqueued += 1;
         } else {
           const [created] = await db
             .insert(works)
