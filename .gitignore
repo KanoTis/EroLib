@@ -12,6 +12,7 @@ cache
 *.log
 coverage
 .turbo
+*.tsbuildinfo
 .tmp/
 .tmp-*/
 **/.tmp-research/
