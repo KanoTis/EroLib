@@ -12,3 +12,6 @@ cache
 *.log
 coverage
 .turbo
+.tmp/
+.tmp-*/
+**/.tmp-research/
