@@ -4,20 +4,11 @@ FROM node:22-bookworm-slim AS base
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
 
-FROM base AS deps
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
-COPY packages/shared/package.json packages/shared/
-COPY apps/server/package.json apps/server/
-COPY apps/web/package.json apps/web/
-RUN pnpm install --frozen-lockfile
-
-FROM deps AS build
-# .dockerignore excludes **/node_modules and **/dist, so package-level
-# workspace links created by pnpm install remain after these COPY steps.
-COPY packages/shared packages/shared
-COPY apps/server apps/server
-COPY apps/web apps/web
-RUN pnpm --filter @erolib/shared build \
+FROM base AS build
+# .dockerignore keeps context small and excludes host node_modules/dist
+COPY . .
+RUN pnpm install --frozen-lockfile \
+  && pnpm --filter @erolib/shared build \
   && pnpm --filter @erolib/web build \
   && pnpm --filter @erolib/server build
 
@@ -44,9 +35,9 @@ COPY apps/server/package.json apps/server/
 COPY --from=build /app/packages/shared/dist packages/shared/dist
 COPY --from=build /app/apps/server/dist apps/server/dist
 COPY --from=build /app/apps/web/dist apps/web/dist
-COPY --from=deps /app/node_modules node_modules
-COPY --from=deps /app/apps/server/node_modules apps/server/node_modules
-COPY --from=deps /app/packages/shared/node_modules packages/shared/node_modules
+COPY --from=build /app/node_modules node_modules
+COPY --from=build /app/apps/server/node_modules apps/server/node_modules
+COPY --from=build /app/packages/shared/node_modules packages/shared/node_modules
 
 RUN mkdir -p /data /media /cache
 EXPOSE 8080
