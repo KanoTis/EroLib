@@ -116,4 +116,4 @@ const outDir = liveMediaDir(config.mediaDir, provider, authorId, roomId);
 
 - **Independent `live_media` table** (not `works.kind`): keeps VOD sync/retry isolation.
 - **`media/{provider}/live/...` partition**: avoids colliding with VOD `media/{provider}/{author}/{workId}`.
-- **Browser inject script is a runtime asset**: `apps/server/src/jobs/live-browser-script.js` is plain JS loaded via `readFile` relative to compiled `live-recorder.js`. Server `build` must copy it to `dist/jobs/` (`scripts/copy-runtime-assets.mjs` after `tsc`). `tsc` alone does not emit this file — missing copy → production `ENOENT` and live auto-record fails.
+- **Browser inject script is a runtime asset**: `apps/server/src/jobs/live-browser-script.js` is plain JS loaded via `readFile` relative to compiled `live-recorder.js`. Server `build` must copy it to `dist/jobs/` (`scripts/copy-runtime-assets.mjs` after `tsc`). `tsc` alone does not emit this file — missing copy → production `ENOENT` and live auto-record fails. `.dockerignore` must **not** exclude `apps/server/scripts/copy-runtime-assets.mjs` (smoke/probe scripts may still be ignored).
