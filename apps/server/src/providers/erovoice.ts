@@ -342,11 +342,30 @@ export function parseDetailHtml(
   if (!title) title = workId;
 
   let description: string | undefined;
+  // Live site uses <article class="discContent">; older fixtures may use <div>.
+  // Must close on the same element type — a bare </div> match overruns into #respond.
   const disc =
-    /class=["'][^"']*discContent[^"']*["'][^>]*>([\s\S]*?)<\/div>/i.exec(html);
+    /class=["'][^"']*discContent[^"']*["'][^>]*>([\s\S]*?)<\/(?:article|div)>/i.exec(
+      html,
+    );
   if (disc?.[1]) {
     const d = stripTags(disc[1]);
     if (d) description = d;
+  }
+  if (!description) {
+    const ogDesc =
+      /property=["']og:description["'][^>]*content=["']([^"']+)["']/i.exec(
+        html,
+      ) ??
+      /content=["']([^"']+)["'][^>]*property=["']og:description["']/i.exec(
+        html,
+      ) ??
+      /name=["']description["'][^>]*content=["']([^"']+)["']/i.exec(html) ??
+      /content=["']([^"']+)["'][^>]*name=["']description["']/i.exec(html);
+    if (ogDesc?.[1]) {
+      const d = decodeHtmlEntities(ogDesc[1]).trim();
+      if (d) description = d;
+    }
   }
 
   let authorId: string | null = null;
