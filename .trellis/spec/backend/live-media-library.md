@@ -56,6 +56,12 @@ Parallel to VOD: `works` remains VOD-only. `live_record_jobs` is the recording p
 - Filter: `type=all|vod|live` (query `/?type=live` supported).
 - Live badge required; VOD must not be labeled live.
 - Play live via `api.liveAudioUrl(provider, roomId)` — never `/api/works/.../audio`.
+- **Pagination (required when list can exceed one page)**:
+  - Page size **50** per source (`limit=50`, `offset` advances by returned length).
+  - First load / kind change / search: **replace** list at `offset=0`; reset both sources’ hasMore/offset before the request settles (block load-more on stale window).
+  - “加载更多”: **append** only; `hasMore = batch.length === 50` (no `total` field).
+  - `type=all`: each source with hasMore fetches the next batch (parallel); do **not** require global strict interleaving across unloaded rows.
+  - Web client must pass `limit`/`offset` on `api.works` and `api.liveMedia` — never raise limit to “load everything”.
 
 ### Live page
 
