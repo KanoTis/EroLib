@@ -88,11 +88,19 @@ export const api = {
       body: JSON.stringify(provider ? { provider } : {}),
     }),
   syncRuns: () => request<SyncRunPublic[]>("/api/sync/runs"),
-  works: (params?: { q?: string; status?: string; provider?: string }) => {
+  works: (params?: {
+    q?: string;
+    status?: string;
+    provider?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
     const sp = new URLSearchParams();
     if (params?.q) sp.set("q", params.q);
     if (params?.status) sp.set("status", params.status);
     if (params?.provider) sp.set("provider", params.provider);
+    if (params?.limit != null) sp.set("limit", String(params.limit));
+    if (params?.offset != null) sp.set("offset", String(params.offset));
     const qs = sp.toString();
     return request<WorkPublic[]>(`/api/works${qs ? `?${qs}` : ""}`);
   },
@@ -144,11 +152,17 @@ export const api = {
   liveJobs: () => request<LiveRecordJobPublic[]>("/api/live/jobs"),
   livePoll: () =>
     request<{ ok: boolean }>("/api/live/poll", { method: "POST" }),
-  liveMedia: (params?: { q?: string; provider?: string; limit?: number }) => {
+  liveMedia: (params?: {
+    q?: string;
+    provider?: string;
+    limit?: number;
+    offset?: number;
+  }) => {
     const sp = new URLSearchParams();
     if (params?.q) sp.set("q", params.q);
     if (params?.provider) sp.set("provider", params.provider);
-    if (params?.limit) sp.set("limit", String(params.limit));
+    if (params?.limit != null) sp.set("limit", String(params.limit));
+    if (params?.offset != null) sp.set("offset", String(params.offset));
     const qs = sp.toString();
     return request<LiveMediaPublic[]>(
       `/api/live/media${qs ? `?${qs}` : ""}`,

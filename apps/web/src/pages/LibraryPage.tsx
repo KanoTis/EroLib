@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { LiveMediaPublic, WorkPublic } from "@erolib/shared";
 import { api } from "../api";
@@ -40,6 +40,7 @@ type LibraryItem =
     };
 
 const VIEW_MODE_KEY = "erolib.library.viewMode";
+const PAGE_SIZE = 50;
 
 const VIEW_MODE_OPTIONS: {
   id: LibraryViewMode;
@@ -99,9 +100,20 @@ export function LibraryPage() {
   );
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [vodOffset, setVodOffset] = useState(0);
+  const [liveOffset, setLiveOffset] = useState(0);
+  const [vodHasMore, setVodHasMore] = useState(false);
+  const [liveHasMore, setLiveHasMore] = useState(false);
   const [viewMode, setViewMode] = useState<LibraryViewMode>(() =>
     readViewMode(),
   );
+  const requestIdRef = useRef(0);
+
+  const wantVod = kind === "all" || kind === "vod";
+  const wantLive = kind === "all" || kind === "live";
+  const showLoadMore =
+    (wantVod && vodHasMore) || (wantLive && liveHasMore);
 
   function playVod(w: WorkPublic): void {
     const track: PlayableTrack = {
@@ -126,38 +138,135 @@ export function LibraryPage() {
     play(track);
   }
 
-  async function load(): Promise<void> {
+  function vodKey(w: WorkPublic): string {
+    return `${w.provider}:${w.workId}`;
+  }
+
+  function liveKey(m: LiveMediaPublic): string {
+    return `${m.provider}:${m.roomId}`;
+  }
+
+  async function loadInitial(): Promise<void> {
+    const reqId = ++requestIdRef.current;
     try {
       setError(null);
       setLoading(true);
-      const wantVod = kind === "all" || kind === "vod";
-      const wantLive = kind === "all" || kind === "live";
+      setLoadingMore(false);
+      // Drop pagination until this replace succeeds so load-more cannot
+      // append with a new filter against a previous page window.
+      setVodOffset(0);
+      setLiveOffset(0);
+      setVodHasMore(false);
+      setLiveHasMore(false);
+      const fetchVod = kind === "all" || kind === "vod";
+      const fetchLive = kind === "all" || kind === "live";
       const [vod, live] = await Promise.all([
-        wantVod
+        fetchVod
           ? api.works({
               q: q || undefined,
               status: status || undefined,
               provider: provider || undefined,
+              limit: PAGE_SIZE,
+              offset: 0,
             })
           : Promise.resolve([] as WorkPublic[]),
-        wantLive
+        fetchLive
           ? api.liveMedia({
               q: q || undefined,
               provider: provider || undefined,
-              limit: 50,
+              limit: PAGE_SIZE,
+              offset: 0,
             })
           : Promise.resolve([] as LiveMediaPublic[]),
       ]);
+      if (reqId !== requestIdRef.current) return;
       setWorks(vod);
       setLiveItems(live);
+      setVodOffset(vod.length);
+      setLiveOffset(live.length);
+      setVodHasMore(fetchVod && vod.length === PAGE_SIZE);
+      setLiveHasMore(fetchLive && live.length === PAGE_SIZE);
     } catch (e) {
+      if (reqId !== requestIdRef.current) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoading(false);
+      if (reqId === requestIdRef.current) setLoading(false);
     }
   }
+
+  async function loadMore(): Promise<void> {
+    if (loading || loadingMore) return;
+    const fetchVod = (kind === "all" || kind === "vod") && vodHasMore;
+    const fetchLive = (kind === "all" || kind === "live") && liveHasMore;
+    if (!fetchVod && !fetchLive) return;
+
+    const reqId = ++requestIdRef.current;
+    try {
+      setError(null);
+      setLoadingMore(true);
+      const [vod, live] = await Promise.all([
+        fetchVod
+          ? api.works({
+              q: q || undefined,
+              status: status || undefined,
+              provider: provider || undefined,
+              limit: PAGE_SIZE,
+              offset: vodOffset,
+            })
+          : Promise.resolve([] as WorkPublic[]),
+        fetchLive
+          ? api.liveMedia({
+              q: q || undefined,
+              provider: provider || undefined,
+              limit: PAGE_SIZE,
+              offset: liveOffset,
+            })
+          : Promise.resolve([] as LiveMediaPublic[]),
+      ]);
+      if (reqId !== requestIdRef.current) return;
+
+      if (fetchVod) {
+        setWorks((prev) => {
+          const seen = new Set(prev.map(vodKey));
+          const next = [...prev];
+          for (const w of vod) {
+            const k = vodKey(w);
+            if (!seen.has(k)) {
+              seen.add(k);
+              next.push(w);
+            }
+          }
+          return next;
+        });
+        setVodOffset((prev) => prev + vod.length);
+        setVodHasMore(vod.length === PAGE_SIZE);
+      }
+      if (fetchLive) {
+        setLiveItems((prev) => {
+          const seen = new Set(prev.map(liveKey));
+          const next = [...prev];
+          for (const m of live) {
+            const k = liveKey(m);
+            if (!seen.has(k)) {
+              seen.add(k);
+              next.push(m);
+            }
+          }
+          return next;
+        });
+        setLiveOffset((prev) => prev + live.length);
+        setLiveHasMore(live.length === PAGE_SIZE);
+      }
+    } catch (e) {
+      if (reqId !== requestIdRef.current) return;
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (reqId === requestIdRef.current) setLoadingMore(false);
+    }
+  }
+
   useEffect(() => {
-    void load();
+    void loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount + type query
   }, [kind]);
 
@@ -222,7 +331,7 @@ export function LibraryPage() {
               value={q}
               onChange={(e) => setQ(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") void load();
+                if (e.key === "Enter") void loadInitial();
               }}
               aria-label="搜索标题或作者"
             />
@@ -263,7 +372,7 @@ export function LibraryPage() {
               <option value="discovered">已发现</option>
             </select>
           ) : null}
-          <button type="button" onClick={() => void load()}>
+          <button type="button" onClick={() => void loadInitial()}>
             <IconSearch width={16} height={16} />
             搜索
           </button>
@@ -497,6 +606,18 @@ export function LibraryPage() {
         </div>
       )}
 
+      {!loading && items.length > 0 && showLoadMore ? (
+        <div className="library-load-more">
+          <button
+            type="button"
+            className="secondary"
+            disabled={loadingMore}
+            onClick={() => void loadMore()}
+          >
+            {loadingMore ? "加载中…" : "加载更多"}
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
