@@ -133,4 +133,65 @@ describe("erovoice parseDetailHtml", () => {
     assert.deepEqual(meta.tags, ["オホ声", "ディルド"]);
     assert.match(meta.audioUrl, /getm3u8file_origints\.php\?id=7993$/);
   });
+
+  it("stops description at article.discContent before comment chrome", () => {
+    const html = `
+      <html><head>
+        <meta property="og:title" content="【初投稿】ぐちゅぐちゅ音聞いて？" />
+        <meta property="og:description" content="初めまして。普段は別の音声投稿サイトにて活動している「すずらん」と申します(´ ˘ \`∗)私の音声聞いて「すず抜き」してくれたら嬉しいです！" />
+      </head><body>
+        <h1>【初投稿】ぐちゅぐちゅ音聞いて？</h1>
+        <section class="voiceDesctiption">
+          <article class="discContent">
+            初めまして。普段は別の音声投稿サイトにて活動している「すずらん」と申します(´ ˘ \`∗)<br />
+私の音声聞いて「すず抜き」してくれたら嬉しいです！
+          </article>
+        </section>
+        <section data-cname="comment">
+          <article id="commentArea">
+            <p>この音声を聞いた感想をすずらんさんに送ろう♪<br>感想が苦手な方は一言「よかった」でもいいので感想を書いてください♪<br>すずらんさんが喜んでくれます。</p>
+            <div id="respond" class="comment-respond">
+              <small><a rel="nofollow" id="cancel-comment-reply-link" href="/ero-voice/3029.html#respond">コメントをキャンセル</a></small>
+              <form id="commentform" class="comment-form">
+                <article class="fixedCommentList"><dl><dt>定型文：</dt><dd><ul>
+                  <li><button>コメント</button></li>
+                  <li><button>抜いた報告</button></li>
+                </ul></dd></dl></article>
+              </form>
+            </div>
+          </article>
+        </section>
+      </body></html>
+    `;
+    const meta = parseDetailHtml(
+      html,
+      "3029",
+      "https://erovoice-ch.com/ero-voice/3029.html",
+    );
+    assert.equal(
+      meta.description,
+      "初めまして。普段は別の音声投稿サイトにて活動している「すずらん」と申します(´ ˘ \`∗) 私の音声聞いて「すず抜き」してくれたら嬉しいです！",
+    );
+    assert.ok(meta.description && !meta.description.includes("感想を"));
+    assert.ok(meta.description && !meta.description.includes("コメントをキャンセル"));
+    assert.ok(meta.description && !meta.description.includes("定型文"));
+    assert.ok(meta.description && !meta.description.includes("抜いた報告"));
+  });
+
+  it("falls back to og:description when discContent is missing", () => {
+    const html = `
+      <html><head>
+        <meta property="og:title" content="タイトルのみ" />
+        <meta property="og:description" content="og側の説明文です" />
+      </head><body>
+        <h1>タイトルのみ</h1>
+      </body></html>
+    `;
+    const meta = parseDetailHtml(
+      html,
+      "1",
+      "https://erovoice-ch.com/ero-voice/1.html",
+    );
+    assert.equal(meta.description, "og側の説明文です");
+  });
 });
