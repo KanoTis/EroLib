@@ -1,6 +1,8 @@
 services:
   app:
     image: ghcr.io/kanotis/erolib:latest
+    init: true
+    ipc: host
     # 本地改源码构建时改用：
     # build: .
     # image: erolib:local
