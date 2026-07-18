@@ -98,6 +98,8 @@ const verified = await verifyProviderCredentials(provider, auth);
 if ("error" in verified) return c.json({ error: verified.error }, 400);
 await db.insert(providerAccounts).values({
   ...,
+  // password/cookie: encryptJson → encryptedPayload
+  // session: must not stay plaintext long-term (see below)
   sessionBlob: JSON.stringify(verified.session),
   status: "ok",
 });
@@ -110,3 +112,73 @@ await db.insert(providerAccounts).values({
 **Decision**: Create/update secret paths verify via `provider.login` + `isSessionValid` **before** writing secrets. Fail → 400, no secret write. Keep `POST .../test` for recheck of stored accounts.
 
 **Why**: Avoid dirty rows and false UI success; reuse existing provider auth implementations.
+
+## Scenario: Encrypt provider sessionBlob (P0 gap)
+
+### 1. Scope / Trigger
+
+- Trigger: any write/read of `provider_accounts.session_blob` (create/patch/test, job runner, live-poller, live-history-sync).
+- Cross-layer: DB column holds third-party session tokens (accessToken etc.); `app.db` leak ≡ session hijack.
+- Full-stack audit (2026-07-18): passwords/cookies use AES-GCM (`encryptedPayload`); **sessions currently `JSON.stringify` plaintext**.
+
+### 2. Signatures
+
+```ts
+// Target helpers (same secret as credentials.ts)
+function encryptSession(secret: string, session: Session): string
+function decryptSession(secret: string, blob: string): Session
+// DB: provider_accounts.session_blob TEXT — ciphertext or legacy plaintext during migration
+```
+
+### 3. Contracts
+
+| Field | Today | Target |
+|-------|--------|--------|
+| `encryptedPayload` | AES-GCM of password/cookie | unchanged |
+| `sessionBlob` | `JSON.stringify(session)` plaintext | same AES-GCM envelope as credentials (or versioned prefix) |
+| API public DTO | never returns raw session | unchanged |
+
+### 4. Validation & Error Matrix
+
+| Condition | Behavior |
+|-----------|----------|
+| Write path after login/test | always encrypt before INSERT/UPDATE |
+| Read path (jobs/sync) | decrypt; if decrypt fails, try legacy JSON parse once |
+| Legacy plaintext row | accept on read; rewrite encrypted on next successful session refresh |
+| Missing `CREDENTIALS_SECRET` / config secret | fail closed (same as credential encrypt) |
+
+### 5. Good / Base / Bad Cases
+
+- **Good**: new account → `sessionBlob` ciphertext only; runner decrypts and calls provider APIs.
+- **Base**: old DB row still plaintext JSON → first job read migrates to ciphertext.
+- **Bad**: leave `sessionBlob: JSON.stringify(session)` as the permanent write path after encrypt lands.
+
+### 6. Tests Required
+
+- Unit: encrypt → decrypt round-trip equals original Session.
+- Unit: decrypt accepts legacy `JSON.stringify` fixture and returns Session.
+- Integration: POST create/test persists non-JSON-looking blob (not parseable as plain Session).
+- Integration: runner/live path still loads session after encrypt.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+sessionBlob: JSON.stringify(verified.session), // tokens at rest in app.db
+```
+
+#### Correct
+
+```ts
+sessionBlob: encryptSession(secret, verified.session),
+// readers: decryptSession(secret, row.sessionBlob) with legacy plaintext fallback
+```
+
+## Design Decision: Session at rest must match credential encryption
+
+**Context**: Audit found password/cookie encrypted but live provider tokens stored plaintext in the same row.
+
+**Decision**: Treat `sessionBlob` as secret material. Encrypt at rest with the same key material as `encryptedPayload`; support one-shot legacy plaintext read + rewrite.
+
+**Why**: `app.db` / volume exposure must not yield usable third-party sessions.
