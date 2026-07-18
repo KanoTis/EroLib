@@ -5,7 +5,7 @@ import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
 import path from "node:path";
 import { createReadStream, statSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { z } from "zod";
 import type {
@@ -61,7 +61,7 @@ import {
   resolveAuthorByInput,
 } from "./providers/otobanana-live.js";
 import { sessionData } from "./providers/types.js";
-import { mediaWorkDir, pathExists } from "./storage/paths.js";
+import { liveMediaDir, mediaWorkDir, pathExists } from "./storage/paths.js";
 import type { ProviderAuth, Session } from "@erolib/shared";
 
 export interface AppDeps {
@@ -1229,6 +1229,50 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     }
   });
 
+  /** Resolve path under mediaDir; null if traversal would escape the root. */
+  function resolveUnderMediaRoot(relPath: string): string | null {
+    const root = path.resolve(config.mediaDir);
+    const full = path.resolve(root, relPath);
+    const rel = path.relative(root, full);
+    // Reject escape (`..`), absolute re-root, and the media root itself.
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
+    return full;
+  }
+
+  /**
+   * Best-effort delete of a live media file and its room directory.
+   * Room dirs are only removed via liveMediaDir (sanitized segments) — never
+   * by walking arbitrary parents of mediaRelPath (avoids wiping VOD trees).
+   */
+  async function removeLiveMediaFiles(
+    relPath: string | null | undefined,
+    opts?: { provider?: string; authorId?: string; roomId?: string },
+  ): Promise<void> {
+    if (relPath) {
+      const full = resolveUnderMediaRoot(relPath);
+      if (full) {
+        await rm(full, { force: true }).catch(() => undefined);
+      }
+    }
+    if (opts?.provider && opts.authorId && opts.roomId) {
+      const dir = liveMediaDir(
+        config.mediaDir,
+        opts.provider,
+        opts.authorId,
+        opts.roomId,
+      );
+      const root = path.resolve(config.mediaDir);
+      const resolved = path.resolve(dir);
+      const rel = path.relative(root, resolved);
+      // Must stay nested under mediaDir; never allow deleting the root.
+      if (rel && !rel.startsWith("..") && !path.isAbsolute(rel)) {
+        await rm(resolved, { recursive: true, force: true }).catch(
+          () => undefined,
+        );
+      }
+    }
+  }
+
   app.get("/api/live/jobs", async (c) => {
     const rows = await db
       .select({
@@ -1251,6 +1295,55 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
         toLiveJob(r.job, r.username ?? null, r.displayName ?? null),
       ),
     );
+  });
+
+  app.delete("/api/live/jobs/:id", async (c) => {
+    const id = Number.parseInt(c.req.param("id"), 10);
+    if (!Number.isFinite(id)) return c.json({ error: "Invalid id" }, 400);
+
+    const [job] = await db
+      .select()
+      .from(liveRecordJobs)
+      .where(eq(liveRecordJobs.id, id))
+      .limit(1);
+    if (!job) return c.json({ error: "Not found" }, 404);
+
+    // Stop active recorder before deleting so finalize cannot write back.
+    await livePoller.stopRecording(job.id);
+
+    const mediaRows = await db
+      .select()
+      .from(liveMedia)
+      .where(
+        or(
+          eq(liveMedia.jobId, job.id),
+          and(
+            eq(liveMedia.provider, job.provider),
+            eq(liveMedia.roomId, job.roomId),
+          ),
+        ),
+      );
+
+    for (const m of mediaRows) {
+      await removeLiveMediaFiles(m.mediaRelPath, {
+        provider: m.provider,
+        authorId: m.authorId,
+        roomId: m.roomId,
+      });
+      await db.delete(liveMedia).where(eq(liveMedia.id, m.id));
+    }
+
+    // Best-effort clean job media path if media row was already gone.
+    if (mediaRows.length === 0) {
+      await removeLiveMediaFiles(job.mediaRelPath, {
+        provider: job.provider,
+        authorId: job.authorId,
+        roomId: job.roomId,
+      });
+    }
+
+    await db.delete(liveRecordJobs).where(eq(liveRecordJobs.id, job.id));
+    return c.json({ ok: true });
   });
 
   app.post("/api/live/poll", async (c) => {
@@ -1289,6 +1382,62 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       : await query.limit(limit).offset(offset);
 
     return c.json(rows.map(toLiveMedia));
+  });
+
+  app.delete("/api/live/media/:provider/:roomId", async (c) => {
+    const provider = c.req.param("provider");
+    const roomId = c.req.param("roomId");
+    const [row] = await db
+      .select()
+      .from(liveMedia)
+      .where(
+        and(eq(liveMedia.provider, provider), eq(liveMedia.roomId, roomId)),
+      )
+      .limit(1);
+    if (!row) return c.json({ error: "Not found" }, 404);
+
+    // Stop linked jobs first so finalize cannot write after file/DB cleanup.
+    const jobIds = new Set<number>();
+    if (row.jobId != null) jobIds.add(row.jobId);
+    const linkedJobs = await db
+      .select({ id: liveRecordJobs.id })
+      .from(liveRecordJobs)
+      .where(
+        and(
+          eq(liveRecordJobs.provider, row.provider),
+          eq(liveRecordJobs.roomId, row.roomId),
+        ),
+      );
+    for (const j of linkedJobs) jobIds.add(j.id);
+    for (const jobId of jobIds) {
+      await livePoller.stopRecording(jobId);
+    }
+
+    // Re-read media path in case finalize updated it during stop.
+    const [fresh] = await db
+      .select()
+      .from(liveMedia)
+      .where(
+        and(eq(liveMedia.provider, provider), eq(liveMedia.roomId, roomId)),
+      )
+      .limit(1);
+    const media = fresh ?? row;
+
+    await removeLiveMediaFiles(media.mediaRelPath, {
+      provider: media.provider,
+      authorId: media.authorId,
+      roomId: media.roomId,
+    });
+
+    for (const jobId of jobIds) {
+      await db.delete(liveRecordJobs).where(eq(liveRecordJobs.id, jobId));
+    }
+    await db
+      .delete(liveMedia)
+      .where(
+        and(eq(liveMedia.provider, provider), eq(liveMedia.roomId, roomId)),
+      );
+    return c.json({ ok: true });
   });
 
   app.get("/api/live/media/:provider/:roomId/audio", async (c) => {

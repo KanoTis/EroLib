@@ -185,6 +185,29 @@ export function LivePage() {
     }
   }
 
+  async function onDeleteJob(job: LiveRecordJobPublic): Promise<void> {
+    const label = job.title || job.roomId;
+    if (
+      !confirm(
+        `删除录制任务「${label}」？进行中任务会先停止；关联媒体与音频一并删除，不可恢复。`,
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMsg(null);
+    try {
+      await api.deleteLiveJob(job.id);
+      setJobs((prev) => prev.filter((j) => j.id !== job.id));
+      setMsg("已删除录制任务");
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const openJobs = jobs.filter((j) =>
     ["pending_media", "blocked", "recording", "discovered"].includes(j.state),
   ).length;
@@ -630,36 +653,49 @@ export function LivePage() {
                       </td>
                       <td className="muted small">{j.error || "—"}</td>
                       <td>
-                        {canPlay ? (
-                          <div className="row" style={{ gap: "0.35rem" }}>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                play({
-                                  id: `live:${j.provider}:${j.roomId}`,
-                                  kind: "live",
-                                  title: j.title || j.roomId,
-                                  subtitle:
-                                    j.authorDisplayName ||
-                                    j.authorUsername ||
-                                    j.authorId ||
-                                    undefined,
-                                  src: api.liveAudioUrl(j.provider, j.roomId),
-                                })
-                              }
-                            >
-                              <IconPlay width={14} height={14} />
-                              播放
-                            </button>
-                            <Link to="/?type=live">
-                              <button type="button" className="secondary">
-                                媒体库
+                        <div className="row" style={{ gap: "0.35rem" }}>
+                          {canPlay ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  play({
+                                    id: `live:${j.provider}:${j.roomId}`,
+                                    kind: "live",
+                                    title: j.title || j.roomId,
+                                    subtitle:
+                                      j.authorDisplayName ||
+                                      j.authorUsername ||
+                                      j.authorId ||
+                                      undefined,
+                                    src: api.liveAudioUrl(
+                                      j.provider,
+                                      j.roomId,
+                                    ),
+                                  })
+                                }
+                              >
+                                <IconPlay width={14} height={14} />
+                                播放
                               </button>
-                            </Link>
-                          </div>
-                        ) : (
-                          <span className="muted small">—</span>
-                        )}
+                              <Link to="/?type=live">
+                                <button type="button" className="secondary">
+                                  媒体库
+                                </button>
+                              </Link>
+                            </>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="danger"
+                            disabled={busy}
+                            onClick={() => {
+                              void onDeleteJob(j);
+                            }}
+                          >
+                            删除
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );

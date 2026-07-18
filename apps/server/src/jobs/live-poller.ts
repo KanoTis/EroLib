@@ -39,6 +39,8 @@ export interface LivePoller {
   start(): void;
   stop(): void;
   pollNow(): Promise<void>;
+  /** Stop an active recorder session for a job (no-op if not recording). */
+  stopRecording(jobId: number): Promise<void>;
 }
 
 interface CredentialPayload {
@@ -386,5 +388,8 @@ export function createLivePoller(
       void recorder.stopAll();
     },
     pollNow,
+    async stopRecording(jobId: number) {
+      await recorder.stop(jobId, "shutdown");
+    },
   };
 }
