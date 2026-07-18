@@ -100,8 +100,7 @@ sequenceDiagram
 **请求体（application/x-www-form-urlencoded）：**
 
 ```
-log=poiyee
-pwd=666666%40wAp
+log=
 rememberme=forever
 wp-submit=ログイン
 redirect_to=https://erovoice-ch.com/wp-admin/

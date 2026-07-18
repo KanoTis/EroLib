@@ -23,7 +23,8 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     MEDIA_DIR=/media \
     CACHE_DIR=/cache \
-    WEB_DIST_DIR=/app/apps/web/dist
+    WEB_DIST_DIR=/app/apps/web/dist \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 LABEL org.opencontainers.image.source=https://github.com/KanoTis/EroLib \
       org.opencontainers.image.description="Self-hosted audio media backup server" \
       org.opencontainers.image.licenses=MIT
@@ -42,6 +43,8 @@ COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/apps/server/node_modules apps/server/node_modules
 COPY --from=build /app/packages/shared/node_modules packages/shared/node_modules
 
-RUN mkdir -p /data /media /cache
+RUN mkdir -p /data /media /cache /ms-playwright \
+  && apps/server/node_modules/.bin/playwright install --with-deps --only-shell chromium \
+  && rm -rf /var/lib/apt/lists/*
 EXPOSE 8080
 CMD ["node", "apps/server/dist/index.js"]

@@ -161,7 +161,7 @@ Expires: 长期 (约30天)
    POST /login.php
    Content-Type: application/x-www-form-urlencoded
    
-   Body: id=poiyee&pass=REMOVED
+   Body: id=&pass=
 
 3. 服务器验证:
    - 查询ナンネットID系统或本地数据库
@@ -554,7 +554,7 @@ POST /login.php
 Content-Type: application/x-www-form-urlencoded
 Cookie: PHPSESSID=xxx
 
-id=poiyee&pass=REMOVED
+id=poiyee&pass=
 ```
 - **Response:** 302 Redirect (成功) / 200 HTML (失败)
 - **Set-Cookie:** login_token=xxx

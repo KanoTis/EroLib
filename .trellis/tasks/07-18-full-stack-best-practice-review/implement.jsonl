@@ -1,0 +1,10 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend guideline index; discover active vs placeholder specs for audit scope"}
+{"file": ".trellis/spec/backend/live-media-library.md", "reason": "Active contract for live recording storage and library APIs"}
+{"file": ".trellis/spec/backend/provider-account-credentials.md", "reason": "Active contract for provider credential validate-on-save"}
+{"file": ".trellis/spec/backend/vod-sync-local-media.md", "reason": "Active contract for VOD full-sync when local audio missing"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline index for player and UI conventions"}
+{"file": ".trellis/spec/frontend/global-audio-player.md", "reason": "Active global player / Media Session contract"}
+{"file": ".trellis/spec/guides/index.md", "reason": "Cross-layer and reuse thinking guides for quality assessment"}
+{"file": ".trellis/tasks/07-18-full-stack-best-practice-review/prd.md", "reason": "Task requirements and acceptance criteria"}
+{"file": ".trellis/tasks/07-18-full-stack-best-practice-review/design.md", "reason": "Audit methodology, layers L1-L4, report structure"}
+{"file": ".trellis/tasks/07-18-full-stack-best-practice-review/implement.md", "reason": "Ordered execution checklist and hard boundaries"}

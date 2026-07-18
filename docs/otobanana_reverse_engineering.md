@@ -2,7 +2,6 @@
 
 > 分析日期: 2026-07-11
 > 网站: https://otobanana.com/
-> 测试账户: REMOVED / REMOVED
 
 ---
 
@@ -187,8 +186,8 @@ Content-Type: application/json
 Origin: https://otobanana.com
 
 {
-    "Email": "REMOVED",
-    "Password": "REMOVED"
+    "Email": "",
+    "Password": ""
 }
 ```
 

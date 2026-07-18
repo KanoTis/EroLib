@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/07-18-full-stack-best-practice-review/prd.md", "reason": "AC1-AC5 gate for report completeness and no-code boundary"}
+{"file": ".trellis/tasks/07-18-full-stack-best-practice-review/design.md", "reason": "Report structure and P0/P1/P2 finding template"}
+{"file": ".trellis/tasks/07-18-full-stack-best-practice-review/implement.md", "reason": "Forbidden paths and verification commands"}
+{"file": ".trellis/spec/backend/live-media-library.md", "reason": "Check live-media findings against active contract"}
+{"file": ".trellis/spec/backend/provider-account-credentials.md", "reason": "Check credentials findings against active contract"}
+{"file": ".trellis/spec/backend/vod-sync-local-media.md", "reason": "Check VOD sync findings against active contract"}
+{"file": ".trellis/spec/frontend/global-audio-player.md", "reason": "Check player findings against active contract"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer consistency checks in audit"}
