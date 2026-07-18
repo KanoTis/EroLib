@@ -175,3 +175,36 @@ Implemented Otobanana live discovery/polling/Playwright WAV recording, followee 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: 直播录制删除功能
+
+**Date**: 2026-07-19
+**Task**: 直播录制删除功能
+**Branch**: `master`
+
+### Summary
+
+为媒体库成品与录制任务增加删除能力：DELETE /api/live/media 与 /api/live/jobs，录制中先 stop 再级联清文件/DB；Library/Live 页 danger+confirm；更新 live-media-library spec。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3d15638` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
