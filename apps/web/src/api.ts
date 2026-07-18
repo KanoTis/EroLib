@@ -150,6 +150,8 @@ export const api = {
       { method: "POST" },
     ),
   liveJobs: () => request<LiveRecordJobPublic[]>("/api/live/jobs"),
+  deleteLiveJob: (id: number) =>
+    request<{ ok: boolean }>(`/api/live/jobs/${id}`, { method: "DELETE" }),
   livePoll: () =>
     request<{ ok: boolean }>("/api/live/poll", { method: "POST" }),
   liveMedia: (params?: {
@@ -168,6 +170,11 @@ export const api = {
       `/api/live/media${qs ? `?${qs}` : ""}`,
     );
   },
+  deleteLiveMedia: (provider: string, roomId: string) =>
+    request<{ ok: boolean }>(
+      `/api/live/media/${encodeURIComponent(provider)}/${encodeURIComponent(roomId)}`,
+      { method: "DELETE" },
+    ),
   liveAudioUrl: (provider: string, roomId: string) =>
     `/api/live/media/${encodeURIComponent(provider)}/${encodeURIComponent(roomId)}/audio`,
   audioUrl: (provider: string, workId: string) =>

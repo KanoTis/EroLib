@@ -37,10 +37,26 @@ Parallel to VOD: `works` remains VOD-only. `live_record_jobs` is the recording p
 
 - `GET /api/live/media?q=&provider=&limit=&offset=` → `LiveMediaPublic[]`
 - `GET /api/live/media/:provider/:roomId/audio` → audio stream (`audio/wav`, Range supported)
+- `DELETE /api/live/media/:provider/:roomId` → `{ ok: true }`; missing row → 404
+- `DELETE /api/live/jobs/:id` → `{ ok: true }`; missing job → 404
 
 ### Shared type
 
 `LiveMediaPublic` includes fixed `kind: "live"` for UI merge with VOD cards.
+
+### Delete cascade (local only)
+
+| Entry | Behavior |
+|-------|----------|
+| `DELETE .../media/:provider/:roomId` | Stop linked recorder sessions → remove audio + room dir under `liveMediaDir` → delete matching `live_record_jobs` (by `job_id` and same provider+roomId) → delete `live_media` row |
+| `DELETE .../jobs/:id` | `livePoller.stopRecording(id)` (awaits session finalize) → delete matching `live_media` (by `job_id` or same provider+roomId) + files → delete job row |
+
+Rules:
+
+- File missing on disk still succeeds (DB cleanup is idempotent; `rm` uses `{ force: true }`).
+- Paths must stay under `MEDIA_DIR` (`path.relative` escape check). Room dirs are removed only via `liveMediaDir` (sanitized), never by deleting arbitrary parents of a polluted `mediaRelPath`.
+- Active recording must be stopped before DB/file removal so finalize cannot write back after delete.
+- Web: `api.deleteLiveMedia` / `api.deleteLiveJob`; UI uses `confirm` + danger button (Library live cards / Live jobs table).
 
 ## 3. Contracts
 
@@ -75,6 +91,9 @@ Parallel to VOD: `works` remains VOD-only. `live_record_jobs` is the recording p
 | Row exists, file missing on disk | 404 `Audio file missing` |
 | Range start/end invalid | 416 with `Content-Range: bytes */size` |
 | Live item retry as VOD work | Not applicable — no `download_jobs` row |
+| `DELETE` media unknown `(provider, roomId)` | 404 `{ error: "Not found" }` |
+| `DELETE` job invalid / missing id | 400 invalid id / 404 not found |
+| `DELETE` when file already gone | 200 `{ ok: true }` (DB still cleaned) |
 
 ## 5. Good / Base / Bad
 

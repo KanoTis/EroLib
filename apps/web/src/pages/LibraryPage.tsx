@@ -138,6 +138,29 @@ export function LibraryPage() {
     play(track);
   }
 
+  async function deleteLive(m: LiveMediaPublic): Promise<void> {
+    const title = m.title || m.roomId;
+    if (
+      !confirm(
+        `删除直播录制「${title}」？将同时删除本地音频与关联录制任务，不可恢复。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      setError(null);
+      await api.deleteLiveMedia(m.provider, m.roomId);
+      setLiveItems((prev) =>
+        prev.filter(
+          (x) => !(x.provider === m.provider && x.roomId === m.roomId),
+        ),
+      );
+      setLiveOffset((prev) => Math.max(0, prev - 1));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   function vodKey(w: WorkPublic): string {
     return `${w.provider}:${w.workId}`;
   }
@@ -472,6 +495,15 @@ export function LibraryPage() {
                           <IconPlay width={14} height={14} />
                           播放
                         </button>
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => {
+                            void deleteLive(m);
+                          }}
+                        >
+                          删除
+                        </button>
                       </div>
                     </div>
                   ) : (
@@ -500,6 +532,20 @@ export function LibraryPage() {
                         >
                           <IconPlay width={14} height={14} />
                           {viewMode === "small" ? null : "播放"}
+                        </button>
+                        <button
+                          type="button"
+                          className={
+                            viewMode === "small" ? "danger icon-btn" : "danger"
+                          }
+                          aria-label={
+                            viewMode === "small" ? `删除 ${title}` : undefined
+                          }
+                          onClick={() => {
+                            void deleteLive(m);
+                          }}
+                        >
+                          {viewMode === "small" ? "×" : "删除"}
                         </button>
                       </div>
                     </div>
