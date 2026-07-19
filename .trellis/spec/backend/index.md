@@ -20,8 +20,8 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [Live Media Library](./live-media-library.md) | Live recording storage, `live_media`, library APIs | Active |
-| [Provider Account Credentials](./provider-account-credentials.md) | Validate-on-save for provider password/cookie | Active |
-| [VOD Sync Local Media](./vod-sync-local-media.md) | Full-sync re-download when local audio missing/0-byte | Active |
+| [Provider Account Credentials](./provider-account-credentials.md) | Validate-on-save; `favoriteSyncEnabled` vs legacy `enabled` | Active |
+| [VOD Sync Local Media](./vod-sync-local-media.md) | Full-sync re-download; favorite-sync gate; author `listAuthorWorks` | Active |
 
 ---
 

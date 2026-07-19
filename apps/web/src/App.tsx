@@ -19,6 +19,7 @@ import { LivePage } from "./pages/LivePage";
 import { LoginPage } from "./pages/LoginPage";
 import { ProvidersPage } from "./pages/ProvidersPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SubscribeAddPage } from "./pages/SubscribeAddPage";
 import { SyncPage } from "./pages/SyncPage";
 import { WorkDetailPage } from "./pages/WorkDetailPage";
 
@@ -173,6 +174,7 @@ function AuthenticatedShell({
             <Route path="/works/:provider/:workId" element={<WorkDetailPage />} />
             <Route path="/providers" element={<ProvidersPage />} />
             <Route path="/sync" element={<SyncPage />} />
+            <Route path="/sync/add" element={<SubscribeAddPage />} />
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/live" element={<LivePage />} />
             <Route path="/settings" element={<SettingsPage />} />

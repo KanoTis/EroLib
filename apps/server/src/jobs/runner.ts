@@ -1,20 +1,12 @@
 import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { copyFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import type {
-  ProviderAuth,
-  ProviderId,
-  Session,
-  WorkStatus,
-} from "@erolib/shared";
+import type { ProviderId, WorkStatus } from "@erolib/shared";
 import type { AppConfig } from "../config.js";
-import {
-  decryptJson,
-  type EncryptedBlob,
-} from "../crypto/credentials.js";
 import type { AppDatabase } from "../db/client.js";
 import {
   downloadJobs,
+  liveSubscriptions,
   providerAccounts,
   syncRuns,
   works,
@@ -22,6 +14,7 @@ import {
   type WorkRow,
 } from "../db/schema.js";
 import { tagAudioFile } from "../media/id3.js";
+import { ensureProviderSession } from "../providers/ensure-session.js";
 import { getProvider } from "../providers/index.js";
 import {
   cacheJobDir,
@@ -48,44 +41,8 @@ export interface JobRunner {
   ): Promise<{ ok: true; warning?: string }>;
 }
 
-interface CredentialPayload {
-  mode: "password" | "cookie";
-  username?: string;
-  password?: string;
-  cookieHeader?: string;
-}
-
 function nowSql(): string {
   return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
-}
-
-function parseEncryptedPayload(
-  secret: string,
-  encoded: string,
-): CredentialPayload {
-  const raw: unknown = JSON.parse(encoded);
-  if (!raw || typeof raw !== "object" || !("v" in raw) || !("data" in raw)) {
-    throw new Error("Invalid credential blob");
-  }
-  return decryptJson<CredentialPayload>(secret, raw as EncryptedBlob);
-}
-
-function parseSession(blob: string | null): Session | null {
-  if (!blob) return null;
-  try {
-    const parsed: unknown = JSON.parse(blob);
-    if (
-      parsed &&
-      typeof parsed === "object" &&
-      "provider" in parsed &&
-      "data" in parsed
-    ) {
-      return parsed as Session;
-    }
-  } catch {
-    return null;
-  }
-  return null;
 }
 
 export function createJobRunner(
@@ -98,42 +55,8 @@ export function createJobRunner(
   let timer: ReturnType<typeof setInterval> | null = null;
   let tickTimer: ReturnType<typeof setTimeout> | null = null;
 
-  async function ensureSession(
-    account: ProviderAccountRow,
-  ): Promise<Session> {
-    const provider = getProvider(account.provider as ProviderId);
-    const creds = parseEncryptedPayload(
-      config.credentialsSecret,
-      account.encryptedPayload,
-    );
-    const existing = parseSession(account.sessionBlob);
-    if (existing) {
-      try {
-        if (await provider.isSessionValid(existing)) {
-          return existing;
-        }
-      } catch {
-        // re-login
-      }
-    }
-
-    const auth: ProviderAuth = {
-      mode: creds.mode,
-      username: creds.username,
-      password: creds.password,
-      cookieHeader: creds.cookieHeader,
-    };
-    const session = await provider.login(auth);
-    await db
-      .update(providerAccounts)
-      .set({
-        sessionBlob: JSON.stringify(session),
-        status: "ok",
-        statusMessage: null,
-        updatedAt: nowSql(),
-      })
-      .where(eq(providerAccounts.id, account.id));
-    return session;
+  async function ensureSession(account: ProviderAccountRow) {
+    return ensureProviderSession(db, config, account);
   }
 
   async function enqueueDownload(work: WorkRow): Promise<boolean> {
@@ -168,6 +91,63 @@ export function createJobRunner(
     return true;
   }
 
+  /**
+   * Upsert a discovered work and enqueue download.
+   * `fromFavorites` controls remoteInFavorites (author path must stay false).
+   */
+  async function upsertWorkFromRef(
+    providerId: ProviderId,
+    ref: {
+      workId: string;
+      authorId: string | null;
+      title?: string;
+      authorName?: string;
+    },
+    fromFavorites: boolean,
+  ): Promise<{ discovered: boolean; enqueued: boolean }> {
+    const authorId = resolveAuthorId(ref.authorId);
+    const existing = await db
+      .select()
+      .from(works)
+      .where(
+        and(eq(works.provider, providerId), eq(works.workId, ref.workId)),
+      )
+      .limit(1);
+
+    if (existing[0]) {
+      await db
+        .update(works)
+        .set({
+          // Author-sourced works must never set remoteInFavorites=true.
+          ...(fromFavorites ? { remoteInFavorites: true } : {}),
+          title: ref.title ?? existing[0].title,
+          authorId: ref.authorId ? authorId : existing[0].authorId,
+          authorName: ref.authorName ?? existing[0].authorName,
+          updatedAt: nowSql(),
+        })
+        .where(eq(works.id, existing[0].id));
+      const enq = await enqueueDownload(existing[0]);
+      return { discovered: true, enqueued: enq };
+    }
+
+    const [created] = await db
+      .insert(works)
+      .values({
+        provider: providerId,
+        workId: ref.workId,
+        authorId,
+        authorName: ref.authorName ?? null,
+        title: ref.title ?? ref.workId,
+        status: "discovered",
+        remoteInFavorites: fromFavorites,
+      })
+      .returning();
+    if (created && (await enqueueDownload(created))) {
+      return { discovered: true, enqueued: true };
+    }
+    return { discovered: true, enqueued: false };
+  }
+
   async function syncOne(account: ProviderAccountRow): Promise<void> {
     const providerId = account.provider as ProviderId;
     const [run] = await db
@@ -179,55 +159,94 @@ export function createJobRunner(
     let discovered = 0;
     let enqueued = 0;
     let markedNotFavorite = 0;
+    const authorErrors: string[] = [];
 
     try {
       const provider = getProvider(providerId);
       const session = await ensureSession(account);
-      const remoteIds = new Set<string>();
 
-      for await (const ref of provider.listFavorites(session)) {
-        discovered += 1;
-        remoteIds.add(ref.workId);
-        const authorId = resolveAuthorId(ref.authorId);
-        const existing = await db
+      // --- Favorites (gated by favoriteSyncEnabled) ---
+      if (account.favoriteSyncEnabled) {
+        const remoteIds = new Set<string>();
+
+        for await (const ref of provider.listFavorites(session)) {
+          remoteIds.add(ref.workId);
+          const r = await upsertWorkFromRef(providerId, ref, true);
+          if (r.discovered) discovered += 1;
+          if (r.enqueued) enqueued += 1;
+        }
+
+        const local = await db
           .select()
           .from(works)
           .where(
             and(
               eq(works.provider, providerId),
-              eq(works.workId, ref.workId),
+              eq(works.remoteInFavorites, true),
             ),
-          )
-          .limit(1);
+          );
 
-        if (existing[0]) {
+        for (const w of local) {
+          if (!remoteIds.has(w.workId)) {
+            await db
+              .update(works)
+              .set({ remoteInFavorites: false, updatedAt: nowSql() })
+              .where(eq(works.id, w.id));
+            markedNotFavorite += 1;
+          }
+        }
+      }
+
+      // --- Author subscriptions (sync_works); independent of favoriteSyncEnabled ---
+      const authorSubs = await db
+        .select()
+        .from(liveSubscriptions)
+        .where(
+          and(
+            eq(liveSubscriptions.provider, providerId),
+            eq(liveSubscriptions.syncWorks, true),
+          ),
+        );
+
+      for (const sub of authorSubs) {
+        try {
+          for await (const ref of provider.listAuthorWorks(
+            session,
+            sub.authorId,
+          )) {
+            // Force authorId when provider list omits it
+            const withAuthor = {
+              ...ref,
+              authorId: ref.authorId ?? sub.authorId,
+              authorName:
+                ref.authorName ??
+                sub.displayName ??
+                sub.username ??
+                undefined,
+            };
+            const r = await upsertWorkFromRef(providerId, withAuthor, false);
+            if (r.discovered) discovered += 1;
+            if (r.enqueued) enqueued += 1;
+          }
           await db
-            .update(works)
+            .update(liveSubscriptions)
             .set({
-              remoteInFavorites: true,
-              title: ref.title ?? existing[0].title,
-              authorId: ref.authorId ? authorId : existing[0].authorId,
-              authorName: ref.authorName ?? existing[0].authorName,
+              lastCheckAt: nowSql(),
+              lastError: null,
               updatedAt: nowSql(),
             })
-            .where(eq(works.id, existing[0].id));
-          if (await enqueueDownload(existing[0])) enqueued += 1;
-        } else {
-          const [created] = await db
-            .insert(works)
-            .values({
-              provider: providerId,
-              workId: ref.workId,
-              authorId,
-              authorName: ref.authorName ?? null,
-              title: ref.title ?? ref.workId,
-              status: "discovered",
-              remoteInFavorites: true,
+            .where(eq(liveSubscriptions.id, sub.id));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          authorErrors.push(`${sub.authorId}: ${message}`);
+          await db
+            .update(liveSubscriptions)
+            .set({
+              lastCheckAt: nowSql(),
+              lastError: message,
+              updatedAt: nowSql(),
             })
-            .returning();
-          if (created && (await enqueueDownload(created))) {
-            enqueued += 1;
-          }
+            .where(eq(liveSubscriptions.id, sub.id));
         }
       }
 
@@ -242,26 +261,6 @@ export function createJobRunner(
         })
         .where(eq(providerAccounts.id, account.id));
 
-      const local = await db
-        .select()
-        .from(works)
-        .where(
-          and(
-            eq(works.provider, providerId),
-            eq(works.remoteInFavorites, true),
-          ),
-        );
-
-      for (const w of local) {
-        if (!remoteIds.has(w.workId)) {
-          await db
-            .update(works)
-            .set({ remoteInFavorites: false, updatedAt: nowSql() })
-            .where(eq(works.id, w.id));
-          markedNotFavorite += 1;
-        }
-      }
-
       await db
         .update(syncRuns)
         .set({
@@ -269,6 +268,10 @@ export function createJobRunner(
           discovered,
           enqueued,
           markedNotFavorite,
+          error:
+            authorErrors.length > 0
+              ? `author sync: ${authorErrors.slice(0, 5).join("; ")}`
+              : null,
         })
         .where(eq(syncRuns.id, run.id));
     } catch (err) {
@@ -298,12 +301,24 @@ export function createJobRunner(
     if (syncRunning) return;
     syncRunning = true;
     try {
-      const accounts = await db
-        .select()
-        .from(providerAccounts)
-        .where(eq(providerAccounts.enabled, true));
+      // All configured accounts: favorites gated inside syncOne; author works always when subscribed.
+      const accounts = await db.select().from(providerAccounts);
       for (const account of accounts) {
         if (provider && account.provider !== provider) continue;
+        // Skip account only when neither favorites nor author sync applies.
+        if (!account.favoriteSyncEnabled) {
+          const [hasAuthor] = await db
+            .select({ id: liveSubscriptions.id })
+            .from(liveSubscriptions)
+            .where(
+              and(
+                eq(liveSubscriptions.provider, account.provider),
+                eq(liveSubscriptions.syncWorks, true),
+              ),
+            )
+            .limit(1);
+          if (!hasAuthor) continue;
+        }
         await syncOne(account);
       }
     } finally {

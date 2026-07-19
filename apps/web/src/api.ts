@@ -1,4 +1,5 @@
 import type {
+  AuthorSearchHit,
   DownloadJobPublic,
   HealthResponse,
   LiveFolloweeHistoryPublic,
@@ -8,6 +9,7 @@ import type {
   LiveSubscriptionPublic,
   ProviderAccountPublic,
   SettingsPublic,
+  SubscriptionImportResult,
   SyncRunPublic,
   WorkPublic,
 } from "@erolib/shared";
@@ -118,13 +120,33 @@ export const api = {
   jobs: () => request<DownloadJobPublic[]>("/api/jobs"),
   liveSubscriptions: () =>
     request<LiveSubscriptionPublic[]>("/api/live/subscriptions"),
-  addLiveSubscription: (input: string) =>
+  searchAuthors: (provider: string, q: string) =>
+    request<AuthorSearchHit[]>(
+      `/api/authors/search?provider=${encodeURIComponent(provider)}&q=${encodeURIComponent(q)}`,
+    ),
+  addLiveSubscription: (body: {
+    input?: string;
+    authorId?: string;
+    username?: string | null;
+    displayName?: string | null;
+    provider?: string;
+    syncWorks?: boolean;
+    enabled?: boolean;
+  }) =>
     request<LiveSubscriptionPublic>("/api/live/subscriptions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ input }),
+      body: JSON.stringify(body),
     }),
-  patchLiveSubscription: (id: number, body: { enabled?: boolean }) =>
+  importFolloweeSubscriptions: () =>
+    request<SubscriptionImportResult>(
+      "/api/live/subscriptions/import-followees",
+      { method: "POST" },
+    ),
+  patchLiveSubscription: (
+    id: number,
+    body: { enabled?: boolean; syncWorks?: boolean },
+  ) =>
     request<LiveSubscriptionPublic>(`/api/live/subscriptions/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

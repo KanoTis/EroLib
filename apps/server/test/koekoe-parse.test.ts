@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { parseDetail } from "../src/providers/koekoe.js";
+import {
+  parseAuthorSearchHits,
+  parseDetail,
+  parseListCards,
+  parseNextListPage,
+} from "../src/providers/koekoe.js";
 
 const SITE_SLOGAN =
   "スマートフォンから録音した音声を投稿できる音声掲示板です。エロ声やオナニーボイス、喘ぎ声などエッチでアダルトな音声の投稿をお待ちしています。";
@@ -111,5 +116,76 @@ describe("koekoe parseDetail", () => {
     const meta = parseDetail(html, "1");
     assert.equal(meta.title, "1");
     assert.equal(meta.coverUrl, null);
+  });
+});
+
+describe("koekoe parseListCards / parseNextListPage", () => {
+  it("extracts work ids from search/list HTML with author hint", () => {
+    const html = `
+      <div class="list">
+        <h2><a href="detail.php?n=1001">作品一</a></h2>
+        <p><a href="search.php?word=alice&g=1&m=1"><span class="user_name">alice</span></a></p>
+        <a href="detail.php?n=1002">作品二</a>
+        <a href="detail.php?n=1001">dup</a>
+      </div>
+    `;
+    const cards = parseListCards(html, "alice");
+    assert.deepEqual(
+      cards.map((c) => c.workId).sort(),
+      ["1001", "1002"],
+    );
+    assert.equal(cards[0]?.provider, "koekoe");
+    assert.ok(cards.every((c) => c.authorId));
+  });
+
+  it("finds next page from pager links", () => {
+    const html = `
+      <a href="search.php?word=alice&m=1&p=1">1</a>
+      <a href="search.php?word=alice&m=1&p=2">2</a>
+      <a href="search.php?word=alice&m=1&p=3">3</a>
+      <a href="search.php?word=alice&m=1&p=2">next</a>
+    `;
+    assert.equal(parseNextListPage(html, 1), 2);
+    assert.equal(parseNextListPage(`<span>done</span>`, 1), null);
+  });
+});
+
+describe("koekoe parseAuthorSearchHits", () => {
+  it("dedupes authors from user_name and search links", () => {
+    const html = `
+      <div class="list">
+        <p><a href="search.php?word=alice&g=1&m=1"><span class="user_name">alice</span></a>◆trip1</p>
+        <p><span class="user_name">bob</span></p>
+        <p><a href="search.php?word=alice&g=1&m=1"><span class="user_name">alice</span></a></p>
+        <a href="search.php?word=carol&m=1">carol only link</a>
+      </div>
+    `;
+    const hits = parseAuthorSearchHits(html);
+    const ids = hits.map((h) => h.authorId).sort();
+    assert.ok(ids.includes("alice◆trip1") || ids.includes("alice"));
+    assert.ok(ids.includes("bob"));
+    assert.ok(ids.includes("carol"));
+    assert.equal(new Set(ids).size, ids.length);
+  });
+
+  it("extracts authors from list-card entry_auth (search.php shape)", () => {
+    const html = `
+      <div class="desc">
+        <p class="desc_auth_title"><span class="entry_auth">ちひろ</span> : 作品A</p>
+        <p class="desc_auth_title"><span class="entry_auth">なつです</span>◇ID_76293 : 作品B</p>
+        <p class="desc_auth_title"><span class="entry_auth">ちひろ</span> : 作品C</p>
+      </div>
+    `;
+    const hits = parseAuthorSearchHits(html);
+    const ids = hits.map((h) => h.authorId);
+    assert.ok(ids.includes("ちひろ"));
+    assert.ok(ids.includes("なつです◇ID_76293"));
+    assert.equal(ids.filter((id) => id === "ちひろ").length, 1);
+
+    const filtered = parseAuthorSearchHits(html, "ちひろ");
+    assert.deepEqual(
+      filtered.map((h) => h.authorId),
+      ["ちひろ"],
+    );
   });
 });

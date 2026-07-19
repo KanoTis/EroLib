@@ -83,6 +83,8 @@ const FolloweesPage = z
     data: z.array(FolloweeUser).optional(),
     current_page: z.number().optional(),
     last_page: z.number().optional(),
+    per_page: z.number().optional(),
+    total: z.number().optional(),
     next_page_url: z.string().nullable().optional(),
   })
   .passthrough();
@@ -227,6 +229,77 @@ export function parseOnairPayload(payload: unknown): OnairRoom | null {
   return mapRoom(parsed.data);
 }
 
+/** Pure helper: map partial-match search payload (all items). */
+export function mapUserSearchHits(payload: unknown): ResolvedAuthor[] {
+  const parsed = UserSearchResponse.safeParse(payload);
+  if (!parsed.success || !parsed.data.data) return [];
+  const out: ResolvedAuthor[] = [];
+  for (const u of parsed.data.data) {
+    const authorId = u.id?.trim();
+    if (!authorId) continue;
+    out.push({
+      authorId,
+      username: u.username?.trim() || null,
+      displayName: u.name?.trim() || null,
+    });
+  }
+  return out;
+}
+
+/**
+ * Partial author search for subscribe UI.
+ * Prefer fuzzy results; if query looks like UUID, also try direct profile lookup.
+ */
+export async function searchAuthors(
+  query: string,
+  token?: string | null,
+  opts?: { limit?: number },
+): Promise<ResolvedAuthor[]> {
+  const raw = query.trim();
+  if (!raw) return [];
+  const limit = Math.min(Math.max(opts?.limit ?? 20, 1), 50);
+  const byId = new Map<string, ResolvedAuthor>();
+
+  if (looksLikeUuid(raw)) {
+    try {
+      const { status, json } = await fetchJson(
+        `${API_BASE}/api/users/${encodeURIComponent(raw)}`,
+        token,
+      );
+      if (status >= 200 && status < 300) {
+        const profile = UserProfile.safeParse(json);
+        if (profile.success) {
+          byId.set(profile.data.id, {
+            authorId: profile.data.id,
+            username: profile.data.username?.trim() || null,
+            displayName: profile.data.name?.trim() || null,
+          });
+        }
+      }
+    } catch {
+      // fall through to search
+    }
+  }
+
+  const searchTerm = looksLikeUuid(raw)
+    ? raw
+    : normalizeUsernameInput(raw);
+  if (searchTerm) {
+    for (const isAdult of [false, true] as const) {
+      const url = `${API_BASE}/api/users?is_adult=${isAdult}&search=${encodeURIComponent(searchTerm)}`;
+      const { status, json } = await fetchJson(url, token);
+      if (status < 200 || status >= 300) {
+        throw new Error(`Otobanana user search failed: HTTP ${status}`);
+      }
+      for (const hit of mapUserSearchHits(json)) {
+        if (!byId.has(hit.authorId)) byId.set(hit.authorId, hit);
+      }
+    }
+  }
+
+  return [...byId.values()].slice(0, limit);
+}
+
 export async function resolveAuthorByInput(
   input: string,
   token?: string | null,
@@ -354,13 +427,21 @@ export async function resolveSelfAuthorId(
   return resolved.authorId;
 }
 
+/**
+ * Paginate Otobanana followees until exhausted.
+ *
+ * Important: do **not** treat missing `last_page` as `current_page` — that stops
+ * after page 1. Prefer last_page / next_page_url / full-page heuristic.
+ */
 export async function listFolloweeAuthors(
   token: string,
   selfAuthorId: string,
   opts?: { maxPages?: number },
 ): Promise<FolloweeAuthor[]> {
-  const maxPages = opts?.maxPages ?? 10;
+  // ~15–30 per page on Laravel defaults; 50 pages covers 750–1500 followees.
+  const maxPages = opts?.maxPages ?? 50;
   const out: FolloweeAuthor[] = [];
+  const seen = new Set<string>();
   let page = 1;
   while (page <= maxPages) {
     const { status, json } = await fetchJson(
@@ -374,16 +455,52 @@ export async function listFolloweeAuthors(
     if (!parsed.success) {
       throw new Error("Otobanana followees invalid payload");
     }
-    for (const u of parsed.data.data ?? []) {
+    const pageData = parsed.data.data ?? [];
+    if (pageData.length === 0) break;
+
+    for (const u of pageData) {
+      if (seen.has(u.id)) continue;
+      seen.add(u.id);
       out.push({
         authorId: u.id,
         username: u.username?.trim() || null,
         displayName: u.name?.trim() || null,
       });
     }
-    const last = parsed.data.last_page ?? page;
-    if (page >= last || !parsed.data.next_page_url) break;
-    page += 1;
+
+    const last = parsed.data.last_page;
+    const nextUrl = parsed.data.next_page_url;
+    const perPage = parsed.data.per_page;
+    const total = parsed.data.total;
+
+    if (typeof last === "number" && page >= last) break;
+    if (typeof total === "number" && out.length >= total) break;
+    if (nextUrl) {
+      page += 1;
+      continue;
+    }
+    // No next_page_url: keep going only when the page looks full and last/total unknown.
+    if (
+      typeof last !== "number" &&
+      typeof total !== "number" &&
+      typeof perPage === "number" &&
+      perPage > 0 &&
+      pageData.length >= perPage
+    ) {
+      page += 1;
+      continue;
+    }
+    // Fallback: full page without metadata — try one more page rather than stop at 1.
+    if (
+      typeof last !== "number" &&
+      typeof total !== "number" &&
+      !nextUrl &&
+      pageData.length >= 10
+    ) {
+      page += 1;
+      continue;
+    }
+    break;
   }
   return out;
 }
@@ -436,7 +553,7 @@ export async function listFolloweeRecentLivestreams(
   },
 ): Promise<FolloweeRecentRow[]> {
   const followees = await listFolloweeAuthors(token, selfAuthorId, {
-    maxPages: opts?.maxFolloweePages ?? 10,
+    maxPages: opts?.maxFolloweePages ?? 50,
   });
   const sessionsPerAuthor = opts?.sessionsPerAuthor ?? 5;
   const concurrency = opts?.concurrency ?? 4;

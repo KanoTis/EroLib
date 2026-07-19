@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/vod-sync-local-media.md", "reason": "VOD sync behavior and local media rules when changing runSync filter to favorite_sync_enabled"}
+{"file": ".trellis/spec/backend/live-media-library.md", "reason": "Live jobs/media play/delete must stay intact while LivePage loses subscription UI"}
+{"file": ".trellis/spec/backend/provider-account-credentials.md", "reason": "Provider account field changes must not break credential/session paths"}
+{"file": ".trellis/spec/frontend/global-audio-player.md", "reason": "LivePage play entry for completed recordings must keep using global player"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar for Sync/Live/Settings page edits"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar for schema/migrate and job filter changes"}

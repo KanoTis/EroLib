@@ -439,7 +439,7 @@ export function LibraryPage() {
           <IconWave width={36} height={36} />
           <strong>暂无条目</strong>
           <p>
-            点播：Providers 绑定后同步收藏。直播：在「直播」页选定作者并完成录制。
+            点播：Providers 绑定后同步收藏。直播：在「同步」页订阅作者并完成录制。
           </p>
           <div className="row">
             <Link to="/providers">

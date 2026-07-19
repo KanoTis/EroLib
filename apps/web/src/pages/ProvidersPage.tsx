@@ -130,7 +130,6 @@ export function ProvidersPage() {
                   username: username || undefined,
                   password: password || undefined,
                   cookieHeader: cookieHeader || undefined,
-                  enabled: true,
                 })
                 .then(async () => {
                   setMsg("已保存并验证通过");
@@ -169,7 +168,6 @@ export function ProvidersPage() {
                   <th>模式</th>
                   <th>用户</th>
                   <th>状态</th>
-                  <th>启用</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -189,7 +187,6 @@ export function ProvidersPage() {
                         <div className="muted small">{p.statusMessage}</div>
                       ) : null}
                     </td>
-                    <td>{p.enabled ? "是" : "否"}</td>
                     <td>
                       <div className="row">
                         <button
@@ -218,25 +215,6 @@ export function ProvidersPage() {
                           }}
                         >
                           测试
-                        </button>
-                        <button
-                          type="button"
-                          className="ghost"
-                          disabled={busyId === p.id}
-                          onClick={() => {
-                            setBusyId(p.id);
-                            void api
-                              .patchProvider(p.id, { enabled: !p.enabled })
-                              .then(load)
-                              .catch((e: unknown) =>
-                                setError(
-                                  e instanceof Error ? e.message : String(e),
-                                ),
-                              )
-                              .finally(() => setBusyId(null));
-                          }}
-                        >
-                          {p.enabled ? "禁用" : "启用"}
                         </button>
                         <button
                           type="button"

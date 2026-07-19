@@ -375,6 +375,256 @@ export function parseNextMypagePage(html: string): number | null {
   return null;
 }
 
+/**
+ * Next page for list.php / search.php (numeric pager or next link).
+ * Returns null when there is no higher page.
+ */
+export function parseNextListPage(
+  html: string,
+  currentPage: number,
+): number | null {
+  let maxPage = currentPage;
+  const hrefRe =
+    /href=["']([^"']*(?:list|search)\.php[^"']*)["']/gi;
+  let m: RegExpExecArray | null;
+  while ((m = hrefRe.exec(html)) !== null) {
+    const href = m[1] ?? "";
+    const pageMatch = /[?&]p=(\d+)/i.exec(href);
+    if (!pageMatch?.[1]) continue;
+    const n = Number.parseInt(pageMatch[1], 10);
+    if (Number.isFinite(n) && n > maxPage) maxPage = n;
+  }
+  // Prefer explicit "next" link when present
+  const re = /<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  while ((m = re.exec(html)) !== null) {
+    const href = m[1] ?? "";
+    if (!/(?:list|search)\.php/i.test(href)) continue;
+    const text = stripTags(m[2] ?? "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+    if (text !== "next" && text !== "次" && text !== "次へ" && text !== ">>") {
+      continue;
+    }
+    const pageMatch = /[?&]p=(\d+)/i.exec(href);
+    if (!pageMatch?.[1]) continue;
+    const n = Number.parseInt(pageMatch[1], 10);
+    if (Number.isFinite(n) && n > currentPage) return n;
+  }
+  if (maxPage > currentPage) {
+    // Step one page at a time rather than jumping to the last page number.
+    return currentPage + 1;
+  }
+  return null;
+}
+
+/**
+ * Unique author identities from search/list HTML.
+ * Prefer list-card `.entry_auth` (common on search.php) then `.user_name` /
+ * author search links. authorId = display name (+ optional trip/nan marker).
+ */
+export function parseAuthorSearchHits(
+  html: string,
+  query?: string,
+): Array<{
+  authorId: string;
+  username: string | null;
+  displayName: string | null;
+}> {
+  const byId = new Map<
+    string,
+    { authorId: string; username: string | null; displayName: string | null }
+  >();
+
+  const upsert = (authorId: string, displayName: string | null) => {
+    const id = authorId.trim();
+    if (!id) return;
+    if (byId.has(id)) return;
+    byId.set(id, {
+      authorId: id,
+      username: id,
+      displayName: displayName?.trim() || id,
+    });
+  };
+
+  const safeDecode = (raw: string): string => {
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  };
+
+  // List cards: <span class="entry_auth">名前</span> optional ◆trip / ◇ID_n
+  const entryRe =
+    /class=["'][^"']*entry_auth[^"']*["'][^>]*>([^<]+)<\/span>\s*(◆[^\s<:：]+|◇ID_\d+)?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = entryRe.exec(html)) !== null) {
+    const base = safeDecode(stripTags(m[1] ?? "")).trim();
+    if (!base) continue;
+    const marker = m[2]?.trim();
+    const full = marker ? `${base}${marker}` : base;
+    upsert(full, full);
+  }
+
+  // Detail-style: user_name spans (with optional trip / ナンネット marker)
+  const userRe =
+    /<span[^>]*class=["'][^"']*user_name[^"']*["'][^>]*>([^<]+)<\/span>\s*(?:<\/a>)?\s*(◆[^\s<:：]+|◇ID_\d+)?/gi;
+  while ((m = userRe.exec(html)) !== null) {
+    const base = safeDecode(stripTags(m[1] ?? "")).trim();
+    if (!base) continue;
+    const marker = m[2]?.trim();
+    const full = marker ? `${base}${marker}` : base;
+    upsert(full, full);
+  }
+
+  // post_users.php / author links: search.php?word=NAME
+  const linkRe = /search\.php\?word=([^&"']+)/gi;
+  while ((m = linkRe.exec(html)) !== null) {
+    const base = safeDecode(m[1] ?? "").trim();
+    if (base) upsert(base, base);
+  }
+
+  let rows = [...byId.values()];
+  const q = query?.trim();
+  if (q) {
+    const qLower = q.toLowerCase();
+    const filtered = rows.filter((r) => {
+      const id = r.authorId.toLowerCase();
+      const name = (r.displayName ?? "").toLowerCase();
+      return id.includes(qLower) || name.includes(qLower);
+    });
+    // Keep filter when it still finds someone; otherwise keep unfiltered
+    // (exact author-mode pages may only list works for that author).
+    if (filtered.length > 0) rows = filtered;
+  }
+  return rows.slice(0, 20);
+}
+
+async function fetchKoeKoeHtml(
+  url: string,
+  cookieHeader?: string | null,
+): Promise<string> {
+  const headers: Record<string, string> = {
+    "User-Agent": DEFAULT_UA,
+    Accept: "text/html,application/xhtml+xml",
+    Referer: `${BASE}/`,
+  };
+  if (cookieHeader?.trim()) headers.Cookie = cookieHeader.trim();
+  const res = await fetch(url, { headers, redirect: "follow" });
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`Koe-koe author search failed: HTTP ${res.status}`);
+  }
+  return res.text();
+}
+
+/**
+ * Author search: author-mode search + full search + post_users directory filter.
+ * Cookie optional (public pages).
+ */
+export async function searchKoeKoeAuthors(
+  query: string,
+  cookieHeader?: string | null,
+): Promise<
+  Array<{ authorId: string; username: string | null; displayName: string | null }>
+> {
+  const q = query.trim();
+  if (!q) return [];
+  const byId = new Map<
+    string,
+    { authorId: string; username: string | null; displayName: string | null }
+  >();
+  const merge = (
+    rows: Array<{
+      authorId: string;
+      username: string | null;
+      displayName: string | null;
+    }>,
+  ) => {
+    for (const r of rows) {
+      if (!r.authorId || byId.has(r.authorId)) continue;
+      byId.set(r.authorId, r);
+    }
+  };
+
+  const urls = [
+    `${BASE}/search.php?word=${encodeURIComponent(q)}&m=1&p=1`,
+    `${BASE}/search.php?word=${encodeURIComponent(q)}&p=1`,
+    `${BASE}/post_users.php?g=1`,
+    `${BASE}/post_users.php?g=2`,
+  ];
+
+  let firstError: Error | null = null;
+  for (const url of urls) {
+    try {
+      const html = await fetchKoeKoeHtml(url, cookieHeader);
+      // Directory pages: always filter by query; search pages use parse filter.
+      const isDir = url.includes("post_users.php");
+      merge(parseAuthorSearchHits(html, isDir ? q : q));
+    } catch (err) {
+      if (!firstError && err instanceof Error) firstError = err;
+    }
+  }
+
+  const out = [...byId.values()].slice(0, 20);
+  if (out.length === 0 && firstError) throw firstError;
+  return out;
+}
+
+/** List-card rows from list.php / search.php HTML. */
+export function parseListCards(
+  html: string,
+  authorHint?: string,
+): RemoteWorkRef[] {
+  const refs: RemoteWorkRef[] = [];
+  const seen = new Set<string>();
+  // Split on detail links; pull nearby title/author when present.
+  const re = /detail\.php\?n=(\d+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html)) !== null) {
+    const id = m[1];
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const idx = m.index;
+    const window = html.slice(Math.max(0, idx - 400), idx + 800);
+    let title: string | undefined;
+    const h2 = /<h2[^>]*>([\s\S]*?)<\/h2>/i.exec(window);
+    if (h2?.[1]) {
+      const t = stripTags(h2[1]);
+      if (t && !isNoiseTitle(t)) title = t;
+    }
+    if (!title) {
+      const titleLink =
+        /detail\.php\?n=\d+[^"']*["'][^>]*>([\s\S]*?)<\/a>/i.exec(window);
+      if (titleLink?.[1]) {
+        const t = stripTags(titleLink[1]);
+        if (t && !isNoiseTitle(t) && t !== id) title = t;
+      }
+    }
+    let authorName: string | undefined;
+    let authorId: string | null = authorHint?.trim() || null;
+    const user = AUTHOR_IDENTITY_RE.exec(window);
+    if (user?.[1]) {
+      const base = decodeURIComponent(stripTags(user[1])).trim();
+      const marker = user[2]?.trim();
+      if (base) {
+        authorName = marker ? `${base}${marker}` : base;
+        authorId = authorName;
+      }
+    } else if (authorHint?.trim()) {
+      authorName = authorHint.trim();
+    }
+    refs.push({
+      provider: "koekoe",
+      workId: id,
+      authorId,
+      title,
+      authorName,
+    });
+  }
+  return refs;
+}
+
 export const koekoeProvider: Provider = {
   id: "koekoe",
 
@@ -499,6 +749,48 @@ export const koekoeProvider: Provider = {
 
     // Persist refreshed cookie onto session object for caller if they re-save
     session.data.cookieHeader = cookie;
+  },
+
+  async *listAuthorWorks(
+    session: Session,
+    authorId: string,
+  ): AsyncIterable<RemoteWorkRef> {
+    // Author search is public (m=1); cookie optional but refreshed when present.
+    let cookie = sessionData(session).cookieHeader ?? "";
+    const name = authorId.trim();
+    if (!name) throw new Error("Koe-koe author name required");
+
+    const seen = new Set<string>();
+    const MAX_PAGES = 200;
+    let pageNum = 1;
+
+    for (let guard = 0; guard < MAX_PAGES; guard += 1) {
+      await sleep(REQUEST_GAP_MS);
+      const qs = new URLSearchParams({
+        word: name,
+        m: "1",
+        p: String(pageNum),
+      });
+      const page = await fetchHtml(`${BASE}/search.php?${qs.toString()}`, cookie);
+      cookie = page.cookieHeader || cookie;
+      if (page.status >= 400) {
+        throw new Error(`Koe-koe author search HTTP ${page.status}`);
+      }
+
+      let newCount = 0;
+      for (const ref of parseListCards(page.html, name)) {
+        if (seen.has(ref.workId)) continue;
+        seen.add(ref.workId);
+        newCount += 1;
+        yield ref;
+      }
+
+      const next = parseNextListPage(page.html, pageNum);
+      if (next == null || next <= pageNum || newCount === 0) break;
+      pageNum = next;
+    }
+
+    if (cookie) session.data.cookieHeader = cookie;
   },
 
   async getWork(session: Session, workId: string): Promise<WorkMetadata> {

@@ -81,7 +81,10 @@ export interface Session {
 export interface ProviderAccountPublic {
   id: number;
   provider: ProviderId;
+  /** @deprecated Account master switch; no longer gates live/sync. Prefer favoriteSyncEnabled. */
   enabled: boolean;
+  /** Whether this provider participates in VOD favorites sync (manual + scheduled). */
+  favoriteSyncEnabled: boolean;
   authMode: AuthMode;
   username: string | null;
   status: AccountStatus;
@@ -158,13 +161,40 @@ export interface LiveSubscriptionPublic {
   authorId: string;
   username: string | null;
   displayName: string | null;
+  /** Live auto-record (otobanana poller). */
   enabled: boolean;
+  /** VOD author works discovery via listAuthorWorks in full sync. */
+  syncWorks: boolean;
   lastOnairAt: string | null;
   lastRoomId: string | null;
   lastCheckAt: string | null;
   lastError: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+/** Candidate from GET /api/authors/search (manual subscribe add). */
+export interface AuthorSearchHit {
+  provider: ProviderId;
+  authorId: string;
+  username: string | null;
+  displayName: string | null;
+}
+
+/** Result of seeding subscriptions from platform follow lists. */
+export interface SubscriptionImportProviderResult {
+  provider: ProviderId;
+  imported: number;
+  existing: number;
+  fetched: number;
+  /** Set when follow list unavailable (e.g. no account / no API). */
+  skipped?: string | null;
+  error?: string | null;
+}
+
+export interface SubscriptionImportResult {
+  providers: SubscriptionImportProviderResult[];
+  totalImported: number;
 }
 
 export interface LiveRecordJobPublic {

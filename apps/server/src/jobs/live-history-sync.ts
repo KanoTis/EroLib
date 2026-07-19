@@ -1,19 +1,13 @@
 import { and, eq, inArray } from "drizzle-orm";
-import type { ProviderAuth, Session } from "@erolib/shared";
 import type { AppConfig } from "../config.js";
-import {
-  decryptJson,
-  type EncryptedBlob,
-} from "../crypto/credentials.js";
 import type { AppDatabase } from "../db/client.js";
 import {
   liveFolloweeAuthors,
   liveFolloweeSessions,
   providerAccounts,
   settings,
-  type ProviderAccountRow,
 } from "../db/schema.js";
-import { getProvider } from "../providers/index.js";
+import { ensureProviderSession } from "../providers/ensure-session.js";
 import {
   listFolloweeRecentLivestreams,
   resolveSelfAuthorId,
@@ -42,32 +36,8 @@ export interface LiveHistorySyncer {
   }>;
 }
 
-interface CredentialPayload {
-  mode: "password" | "cookie";
-  username?: string;
-  password?: string;
-  cookieHeader?: string;
-}
-
 function nowSql(): string {
   return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
-}
-
-function parseEncryptedPayload(
-  secret: string,
-  encoded: string,
-): CredentialPayload {
-  const raw: unknown = JSON.parse(encoded);
-  return decryptJson(secret, raw as EncryptedBlob) as CredentialPayload;
-}
-
-function parseSession(blob: string | null): Session | null {
-  if (!blob) return null;
-  try {
-    return JSON.parse(blob) as Session;
-  } catch {
-    return null;
-  }
 }
 
 async function upsertSetting(
@@ -111,41 +81,6 @@ export function createLiveHistorySyncer(
   let initialTimer: ReturnType<typeof setTimeout> | null = null;
   let inFlight: Promise<void> | null = null;
 
-  async function ensureSession(account: ProviderAccountRow): Promise<Session> {
-    const provider = getProvider(PROVIDER);
-    const creds = parseEncryptedPayload(
-      config.credentialsSecret,
-      account.encryptedPayload,
-    );
-    const existing = parseSession(account.sessionBlob);
-    if (existing) {
-      try {
-        if (await provider.isSessionValid(existing)) {
-          return existing;
-        }
-      } catch {
-        // re-login
-      }
-    }
-    const auth: ProviderAuth = {
-      mode: creds.mode,
-      username: creds.username,
-      password: creds.password,
-      cookieHeader: creds.cookieHeader,
-    };
-    const session = await provider.login(auth);
-    await db
-      .update(providerAccounts)
-      .set({
-        sessionBlob: JSON.stringify(session),
-        status: "ok",
-        statusMessage: null,
-        updatedAt: nowSql(),
-      })
-      .where(eq(providerAccounts.id, account.id));
-    return session;
-  }
-
   async function ensureToken(): Promise<{
     token: string;
     userId?: string;
@@ -155,9 +90,10 @@ export function createLiveHistorySyncer(
       .from(providerAccounts)
       .where(eq(providerAccounts.provider, PROVIDER))
       .limit(1);
-    if (!account || !account.enabled) return null;
+    // Account `enabled` no longer gates live credentials; only need a configured account.
+    if (!account) return null;
     try {
-      const session = await ensureSession(account);
+      const session = await ensureProviderSession(db, config, account);
       const data = sessionData(session);
       if (!data.accessToken) return null;
       return { token: data.accessToken, userId: data.userId };
@@ -299,7 +235,8 @@ export function createLiveHistorySyncer(
       const selfAuthorId = await resolveSelfAuthorId(auth.token, auth.userId);
       // Conservative crawl: fewer pages + lower concurrency than the old live GET.
       const rows = await listFolloweeRecentLivestreams(auth.token, selfAuthorId, {
-        maxFolloweePages: 6,
+        // Must cover full followee list (listFolloweeAuthors paginates; was 6 → truncates).
+        maxFolloweePages: 50,
         sessionsPerAuthor: 5,
         concurrency: 2,
       });

@@ -32,6 +32,7 @@ export async function migrate(client: Client): Promise<void> {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       provider TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
+      favorite_sync_enabled INTEGER NOT NULL DEFAULT 1,
       auth_mode TEXT NOT NULL,
       username TEXT,
       encrypted_payload TEXT NOT NULL,
@@ -109,6 +110,7 @@ export async function migrate(client: Client): Promise<void> {
       username TEXT,
       display_name TEXT,
       enabled INTEGER NOT NULL DEFAULT 1,
+      sync_works INTEGER NOT NULL DEFAULT 0,
       last_onair_at TEXT,
       last_room_id TEXT,
       last_check_at TEXT,
@@ -189,4 +191,40 @@ export async function migrate(client: Client): Promise<void> {
     CREATE UNIQUE INDEX IF NOT EXISTS live_media_provider_room_uidx
       ON live_media(provider, room_id);
   `);
+
+  // Idempotent column adds for DBs created before newer fields.
+  async function tableColNames(table: string): Promise<Set<string>> {
+    const info = await client.execute(`PRAGMA table_info(${table})`);
+    return new Set(
+      info.rows.map((row) => {
+        const r = row as unknown as Record<string, unknown> | unknown[];
+        if (Array.isArray(r) && r.length > 1) {
+          return String(r[1]);
+        }
+        if (r && typeof r === "object" && "name" in r) {
+          return String((r as Record<string, unknown>).name);
+        }
+        return "";
+      }),
+    );
+  }
+
+  // On first add, copy from legacy `enabled` so VOD sync behavior stays continuous.
+  const accountCols = await tableColNames("provider_accounts");
+  if (!accountCols.has("favorite_sync_enabled")) {
+    await client.execute(
+      `ALTER TABLE provider_accounts ADD COLUMN favorite_sync_enabled INTEGER NOT NULL DEFAULT 1`,
+    );
+    await client.execute(
+      `UPDATE provider_accounts SET favorite_sync_enabled = enabled`,
+    );
+  }
+
+  // Existing live subs stay sync_works=0 (no surprise VOD downloads); new rows set in app.
+  const subCols = await tableColNames("live_subscriptions");
+  if (!subCols.has("sync_works")) {
+    await client.execute(
+      `ALTER TABLE live_subscriptions ADD COLUMN sync_works INTEGER NOT NULL DEFAULT 0`,
+    );
+  }
 }

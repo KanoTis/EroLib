@@ -375,6 +375,78 @@ export const otobananaProvider: Provider = {
     }
   },
 
+  async *listAuthorWorks(
+    session: Session,
+    authorId: string,
+  ): AsyncIterable<RemoteWorkRef> {
+    const { accessToken } = sessionData(session);
+    if (!accessToken) throw new Error("Missing Otobanana access token");
+    const uid = authorId.trim();
+    if (!uid) throw new Error("Otobanana authorId required");
+
+    const seen = new Set<string>();
+    // Public API: offset pagination (limit+offset). Also honor next_page_url if present.
+    const PAGE = 50;
+    let offset = 0;
+    let url: string | null =
+      `${API_BASE}/api/users/${encodeURIComponent(uid)}/casts?limit=${PAGE}&offset=0`;
+    let guard = 0;
+
+    while (url && guard < 200) {
+      guard += 1;
+      const raw = await apiGet(accessToken, url);
+      // Loose page shape: data[] may be Cast or like-list items.
+      const pageObj =
+        raw && typeof raw === "object"
+          ? (raw as Record<string, unknown>)
+          : {};
+      const nextUrl =
+        (typeof pageObj.next_page_url === "string"
+          ? pageObj.next_page_url
+          : null) ??
+        (typeof pageObj.next === "string" ? pageObj.next : null);
+      const rawItems: unknown[] = Array.isArray(pageObj.casts)
+        ? pageObj.casts
+        : Array.isArray(pageObj.data)
+          ? pageObj.data
+          : Array.isArray(pageObj.results)
+            ? pageObj.results
+            : [];
+
+      if (rawItems.length === 0) break;
+
+      let newCount = 0;
+      for (const item of rawItems) {
+        let ref: RemoteWorkRef | null = null;
+        const castParsed = CastPayload.safeParse(item);
+        if (castParsed.success) {
+          ref = castToRef(castParsed.data);
+        }
+        if (!ref) {
+          const likeParsed = LikeListItem.safeParse(item);
+          if (likeParsed.success) ref = likeItemToRef(likeParsed.data);
+        }
+        if (!ref || seen.has(ref.workId)) continue;
+        if (!ref.authorId) {
+          ref = { ...ref, authorId: uid };
+        }
+        seen.add(ref.workId);
+        newCount += 1;
+        yield ref;
+      }
+
+      if (nextUrl) {
+        if (newCount === 0) break;
+        url = nextUrl;
+        continue;
+      }
+
+      if (rawItems.length < PAGE || newCount === 0) break;
+      offset += PAGE;
+      url = `${API_BASE}/api/users/${encodeURIComponent(uid)}/casts?limit=${PAGE}&offset=${offset}`;
+    }
+  },
+
   async getWork(session: Session, workId: string): Promise<WorkMetadata> {
     const { accessToken } = sessionData(session);
     if (!accessToken) throw new Error("Missing Otobanana access token");

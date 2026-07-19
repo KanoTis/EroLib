@@ -42,6 +42,33 @@ const RESERVED_PATH_SEGMENTS: Record<string, true> = {
   "wp-admin": true,
   allsearch: true,
   ranking: true,
+  mypage: true,
+  login: true,
+  logout: true,
+  register: true,
+  signup: true,
+  search: true,
+  page: true,
+  tag: true,
+  tags: true,
+  timeline: true,
+  notice: true,
+  notification: true,
+  notifications: true,
+  feed: true,
+  rss: true,
+  api: true,
+  user: true,
+  users: true,
+  author: true,
+  live: true,
+  home: true,
+  index: true,
+  about: true,
+  help: true,
+  contact: true,
+  settings: true,
+  account: true,
 };
 async function renameSafe(src: string, dest: string): Promise<void> {
   try {
@@ -812,6 +839,88 @@ export const erovoiceProvider: Provider = {
     }
   },
 
+  async *listAuthorWorks(
+    session: Session,
+    authorId: string,
+  ): AsyncIterable<RemoteWorkRef> {
+    let cookie = requireCookie(session);
+    const slug = authorId.trim().replace(/^\/+|\/+$/g, "");
+    if (!slug) throw new Error("Erovoice author slug required");
+    if (RESERVED_PATH_SEGMENTS[slug] || DETAIL_CATEGORY_SET[slug]) {
+      throw new Error(`Invalid Erovoice author slug: ${slug}`);
+    }
+
+    const seen = new Set<string>();
+    const yieldCards = function* (
+      cards: BookmarkCard[],
+    ): Generator<RemoteWorkRef> {
+      for (const card of cards) {
+        if (seen.has(card.workId)) continue;
+        seen.add(card.workId);
+        yield {
+          provider: "erovoice",
+          workId: card.workId,
+          authorId: card.authorId ?? slug,
+          title: card.title,
+          authorName: card.authorName,
+          extra: card.category ? { category: card.category } : undefined,
+        };
+      }
+    };
+
+    // First page: SSR author profile (voiceList on /{slug}/).
+    await sleep(REQUEST_GAP_MS);
+    const ssrRes = await fetch(`${BASE}/${encodeURIComponent(slug)}/`, {
+      headers: siteHeaders(cookie, {
+        Accept: "text/html,application/xhtml+xml",
+        Referer: `${BASE}/`,
+      }),
+      redirect: "follow",
+    });
+    cookie = mergeCookieHeader(cookie, getSetCookieHeaders(ssrRes));
+    session.data.cookieHeader = cookie;
+    if (ssrRes.status >= 400) {
+      throw new Error(`Erovoice author page HTTP ${ssrRes.status}`);
+    }
+    const ssrHtml = await ssrRes.text();
+    if (/wp-login\.php/i.test(ssrHtml) && /name=["']log["']/i.test(ssrHtml)) {
+      throw new Error("Erovoice 会话已失效，无法读取作者页");
+    }
+    const ssrCards = parseBookmarkHtml(ssrHtml);
+    yield* yieldCards(ssrCards);
+
+    // Infinite scroll: getSQLDataAuthorPostData (userName = slug).
+    // Site uses items=50, start=N (same as bookmark).
+    if (ssrCards.length < BOOKMARK_PAGE) {
+      return;
+    }
+
+    for (let page = 1; page < MAX_BOOKMARK_PAGES; page += 1) {
+      await sleep(REQUEST_GAP_MS);
+      const start = String(page * BOOKMARK_PAGE);
+      const res = await ajaxAction(cookie, {
+        action: "getSQLDataAuthorPostData",
+        items: String(BOOKMARK_PAGE),
+        start,
+        userName: slug,
+      });
+      cookie = res.cookieHeader;
+      session.data.cookieHeader = cookie;
+
+      const html = extractHtmlPayload(res.json);
+      if (bookmarkAjaxExhausted(res.json, html)) break;
+
+      const cards = parseBookmarkHtml(html);
+      let newCount = 0;
+      for (const card of cards) {
+        if (seen.has(card.workId)) continue;
+        newCount += 1;
+      }
+      yield* yieldCards(cards);
+      if (newCount === 0 || cards.length < BOOKMARK_PAGE) break;
+    }
+  },
+
   async getWork(session: Session, workId: string): Promise<WorkMetadata> {
     const cookie = requireCookie(session);
     const categoryHint =
@@ -921,3 +1030,298 @@ export const erovoiceProvider: Provider = {
     };
   },
 };
+
+export interface ErovoiceFolloweeAuthor {
+  authorId: string;
+  username: string | null;
+  displayName: string | null;
+}
+
+function isErovoiceAuthorSlug(slug: string): boolean {
+  if (!slug || slug.length < 2 || slug.length > 64) return false;
+  if (RESERVED_PATH_SEGMENTS[slug] || DETAIL_CATEGORY_SET[slug]) return false;
+  // Author slugs are not pure numeric (post ids live under category paths).
+  if (/^\d+$/.test(slug)) return false;
+  // UUID / hex fragments from media paths
+  if (/^[a-f0-9-]{8,}$/i.test(slug) && !/[g-z_]/i.test(slug)) return false;
+  if (slug.startsWith("-") || slug.endsWith("-")) return false;
+  return true;
+}
+
+const PROFILE_HREF_RE =
+  /href=["'](?:https?:\/\/erovoice-ch\.com)?\/([a-zA-Z0-9_-]{2,64})\/?["']/i;
+
+/**
+ * Parse follow-list HTML for author cards.
+ * Prefer `.authorUser` + profile `/{slug}/` (same shape as bookmark/detail pages).
+ * Does not scrape arbitrary page chrome links (no authorUser → ignored).
+ */
+export function parseFollowListHtml(html: string): ErovoiceFolloweeAuthor[] {
+  const byId = new Map<string, ErovoiceFolloweeAuthor>();
+
+  const upsert = (slug: string, displayName: string | null) => {
+    if (!isErovoiceAuthorSlug(slug)) return;
+    const name =
+      displayName && displayName.trim() ? displayName.trim() : null;
+    const existing = byId.get(slug);
+    if (!existing) {
+      byId.set(slug, {
+        authorId: slug,
+        username: slug,
+        displayName: name ?? slug,
+      });
+      return;
+    }
+    // Prefer a real display name over slug-only fallback.
+    if (
+      name &&
+      name !== slug &&
+      (!existing.displayName || existing.displayName === slug)
+    ) {
+      existing.displayName = name;
+    }
+  };
+
+  // Primary: scan <a> tags that both link to /{slug}/ and carry authorUser
+  // (class on the anchor or a nested element). Order of attributes does not matter.
+  const anchorRe = /<a\b([^>]*)>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = anchorRe.exec(html)) !== null) {
+    const attrs = m[1] ?? "";
+    const inner = m[2] ?? "";
+    const hrefM = PROFILE_HREF_RE.exec(attrs);
+    if (!hrefM?.[1]) continue;
+    const slug = hrefM[1];
+    const hasAuthorUser =
+      /class=["'][^"']*authorUser/i.test(attrs) ||
+      /class=["'][^"']*authorUser/i.test(inner);
+    if (!hasAuthorUser) continue;
+
+    let name: string | null = null;
+    const nested =
+      /class=["'][^"']*authorUser[^"']*["'][^>]*>([\s\S]*?)<\//i.exec(inner);
+    if (nested?.[1]) {
+      name = stripTags(nested[1]) || null;
+    } else if (/class=["'][^"']*authorUser/i.test(attrs)) {
+      name = stripTags(inner) || null;
+    }
+    if (!name) {
+      const titleAttr =
+        /title=["']([^"']+)["']/i.exec(attrs) ??
+        /alt=["']([^"']+)["']/i.exec(attrs) ??
+        /alt=["']([^"']+)["']/i.exec(inner);
+      if (titleAttr?.[1]) {
+        name = decodeHtmlEntities(titleAttr[1]).trim() || null;
+      }
+    }
+    upsert(slug, name);
+  }
+
+  // Secondary: .authorUser text sibling to a nearby profile href (not already
+  // captured). Use closest href within a tight window to avoid mypage chrome.
+  const authorUserOnly =
+    /class=["'][^"']*authorUser[^"']*["'][^>]*>([\s\S]*?)<\//gi;
+  while ((m = authorUserOnly.exec(html)) !== null) {
+    const name = stripTags(m[1] ?? "") || null;
+    const idx = m.index ?? 0;
+    const end = idx + m[0].length;
+    const windowStart = Math.max(0, idx - 120);
+    const windowEnd = Math.min(html.length, end + 120);
+    const window = html.slice(windowStart, windowEnd);
+
+    // Prefer nearest profile href to the authorUser match.
+    let bestSlug: string | null = null;
+    let bestDist = Number.POSITIVE_INFINITY;
+    const hrefScan =
+      /href=["'](?:https?:\/\/erovoice-ch\.com)?\/([a-zA-Z0-9_-]{2,64})\/?["']/gi;
+    let hm: RegExpExecArray | null;
+    while ((hm = hrefScan.exec(window)) !== null) {
+      const slug = hm[1] ?? "";
+      if (!isErovoiceAuthorSlug(slug)) continue;
+      const abs = windowStart + (hm.index ?? 0);
+      // Distance to the authorUser span.
+      const dist =
+        abs < idx ? idx - abs : abs > end ? abs - end : 0;
+      if (dist < bestDist) {
+        bestDist = dist;
+        bestSlug = slug;
+      }
+    }
+    if (!bestSlug) continue;
+    // Skip if already have a real name for this slug from primary pass.
+    const existing = byId.get(bestSlug);
+    if (
+      existing &&
+      existing.displayName &&
+      existing.displayName !== bestSlug
+    ) {
+      continue;
+    }
+    upsert(bestSlug, name);
+  }
+
+  return [...byId.values()];
+}
+
+/**
+ * Display name for a single profile page `/{slug}`.
+ */
+export function parseProfileDisplayName(
+  html: string,
+  slug: string,
+): string | null {
+  const h =
+    /<h[1-3][^>]*class=["'][^"']*authorUser[^"']*["'][^>]*>([\s\S]*?)<\/h[1-3]>/i.exec(
+      html,
+    ) ??
+    /class=["'][^"']*authorUser[^"']*["'][^>]*>([\s\S]*?)<\//i.exec(html);
+  if (h?.[1]) {
+    const name = stripTags(h[1]).trim();
+    if (name) return name;
+  }
+  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  if (title?.[1]) {
+    const t = stripTags(title[1])
+      .replace(/\s*[-|｜].*$/, "")
+      .trim();
+    if (t && t.toLowerCase() !== slug.toLowerCase()) return t;
+  }
+  return null;
+}
+
+const SLUG_QUERY_RE = /^[a-zA-Z0-9_-]{2,64}$/;
+
+/**
+ * Erovoice has no official author search API.
+ * Only exact slug (profile id) lookup: GET /{slug}.
+ */
+export async function searchErovoiceAuthors(
+  query: string,
+  sessionCookie?: string | null,
+): Promise<ErovoiceFolloweeAuthor[]> {
+  const q = query.trim().replace(/^\/+|\/+$/g, "");
+  if (!q) return [];
+  if (!SLUG_QUERY_RE.test(q) || !isErovoiceAuthorSlug(q)) return [];
+
+  let cookie = sessionCookie?.trim() || "";
+  const headers: Record<string, string> = {
+    "User-Agent": DEFAULT_UA,
+    Accept: "text/html,application/xhtml+xml",
+    Referer: `${BASE}/`,
+  };
+  if (cookie) headers.Cookie = cookie;
+
+  try {
+    const res = await fetch(`${BASE}/${encodeURIComponent(q)}`, {
+      headers,
+      redirect: "follow",
+    });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const looksMissing =
+      /ページが見つかりません|not\s*found|404/i.test(html) &&
+      !/authorUser/i.test(html);
+    if (looksMissing || !/class=["'][^"']*authorUser/i.test(html)) {
+      return [];
+    }
+    const displayName = parseProfileDisplayName(html, q) ?? q;
+    return [
+      {
+        authorId: q,
+        username: q,
+        displayName,
+      },
+    ];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * List authors the logged-in user follows.
+ * AJAX `getSQLDatafollowslistPostData` is authoritative; SSR is best-effort only.
+ * Filters out the logged-in account (self) via session `userName` slug.
+ */
+export async function listErovoiceFolloweeAuthors(
+  session: Session,
+): Promise<ErovoiceFolloweeAuthor[]> {
+  let cookie = requireCookie(session);
+  let userId = sessionData(session).userId;
+  let userName =
+    typeof session.data.userName === "string" && session.data.userName.trim()
+      ? session.data.userName.trim()
+      : undefined;
+
+  // Need userId for AJAX; userName for self-filter (probe when either missing).
+  if (!userId || !userName) {
+    const probed = await probeLogin(cookie);
+    cookie = probed.cookieHeader;
+    userId = probed.userId;
+    if (probed.userName) userName = probed.userName;
+    session.data.cookieHeader = cookie;
+    session.data.userId = userId;
+    if (userName) session.data.userName = userName;
+  }
+
+  const selfSlug = userName?.toLowerCase() ?? null;
+  const byId = new Map<string, ErovoiceFolloweeAuthor>();
+
+  const merge = (rows: ErovoiceFolloweeAuthor[]) => {
+    for (const r of rows) {
+      if (selfSlug && r.authorId.toLowerCase() === selfSlug) continue;
+      const existing = byId.get(r.authorId);
+      if (!existing) {
+        byId.set(r.authorId, { ...r });
+        continue;
+      }
+      // Prefer real display name over slug-only.
+      if (
+        r.displayName &&
+        r.displayName !== r.authorId &&
+        (!existing.displayName || existing.displayName === r.authorId)
+      ) {
+        existing.displayName = r.displayName;
+      }
+    }
+  };
+
+  // Primary: InfiniteScroll AJAX (avoids mypage chrome / self profile link).
+  for (let page = 0; page < MAX_BOOKMARK_PAGES; page += 1) {
+    await sleep(REQUEST_GAP_MS);
+    const start = String(page * BOOKMARK_PAGE);
+    const res = await ajaxAction(cookie, {
+      action: "getSQLDatafollowslistPostData",
+      items: String(BOOKMARK_PAGE),
+      start,
+      userID: userId,
+    });
+    cookie = res.cookieHeader;
+    session.data.cookieHeader = cookie;
+    const html = extractHtmlPayload(res.json);
+    if (bookmarkAjaxExhausted(res.json, html)) break;
+    const rows = parseFollowListHtml(html);
+    if (rows.length === 0) break;
+    const before = byId.size;
+    merge(rows);
+    if (byId.size === before || rows.length < BOOKMARK_PAGE) break;
+  }
+
+  // Best-effort SSR first page (same strict parser + self-filter).
+  await sleep(REQUEST_GAP_MS);
+  try {
+    const res = await fetch(`${BASE}/mypage.html?type=follow`, {
+      headers: siteHeaders(cookie),
+      redirect: "follow",
+    });
+    cookie = mergeCookieHeader(cookie, getSetCookieHeaders(res));
+    session.data.cookieHeader = cookie;
+    if (res.ok) {
+      const html = await res.text();
+      merge(parseFollowListHtml(html));
+    }
+  } catch {
+    // AJAX already primary
+  }
+
+  return [...byId.values()];
+}

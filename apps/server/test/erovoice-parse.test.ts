@@ -4,6 +4,8 @@ import {
   extractCoverUrl,
   parseBookmarkHtml,
   parseDetailHtml,
+  parseFollowListHtml,
+  parseProfileDisplayName,
   preferOriginalImageUrl,
 } from "../src/providers/erovoice.js";
 
@@ -193,5 +195,116 @@ describe("erovoice parseDetailHtml", () => {
       "https://erovoice-ch.com/ero-voice/1.html",
     );
     assert.equal(meta.description, "og側の説明文です");
+  });
+});
+
+describe("erovoice parseFollowListHtml", () => {
+  it("extracts authorId + displayName from authorUser profile links", () => {
+    const html = `
+      <ul class="followList">
+        <li>
+          <a href="/37gionch/"><span class="authorUser">さなぎ</span></a>
+        </li>
+        <li>
+          <a href="https://erovoice-ch.com/foo_bar/">
+            <span class="authorUser">Foo 作者</span>
+          </a>
+        </li>
+      </ul>
+    `;
+    const rows = parseFollowListHtml(html);
+    assert.equal(rows.length, 2);
+    const a = rows.find((r) => r.authorId === "37gionch");
+    assert.equal(a?.username, "37gionch");
+    assert.equal(a?.displayName, "さなぎ");
+    const b = rows.find((r) => r.authorId === "foo_bar");
+    assert.equal(b?.displayName, "Foo 作者");
+  });
+
+  it("handles authorUser before href and class on the anchor", () => {
+    const html = `
+      <div>
+        <span class="authorUser">逆序名</span>
+        <a href="/revslug/">profile</a>
+      </div>
+      <a class="authorUser" href="/onanchor/">锚点名</a>
+    `;
+    const rows = parseFollowListHtml(html);
+    const rev = rows.find((r) => r.authorId === "revslug");
+    assert.equal(rev?.displayName, "逆序名");
+    const on = rows.find((r) => r.authorId === "onanchor");
+    assert.equal(on?.displayName, "锚点名");
+  });
+
+  it("ignores reserved paths and detail categories", () => {
+    const html = `
+      <a href="/mypage/"><span class="authorUser">マイページ</span></a>
+      <a href="/login/"><span class="authorUser">ログイン</span></a>
+      <a href="/ranking/"><span class="authorUser">ランキング</span></a>
+      <a href="/voice/"><span class="authorUser">音声</span></a>
+      <a href="/ero-voice/"><span class="authorUser">カテゴリ</span></a>
+      <a href="/goodslug/"><span class="authorUser">正しい</span></a>
+    `;
+    const rows = parseFollowListHtml(html);
+    assert.deepEqual(
+      rows.map((r) => r.authorId).sort(),
+      ["goodslug"],
+    );
+    assert.equal(rows[0]?.displayName, "正しい");
+  });
+
+  it("does not treat bare profile links without authorUser as followees", () => {
+    // mypage chrome often has self avatar link without authorUser
+    const html = `
+      <header>
+        <a href="/myself_slug/"><img src="/avatar.jpg" alt="me" /></a>
+        <a href="/myself_slug/">マイページ</a>
+        <a href="/ranking.html">ranking</a>
+      </header>
+      <div class="followCard">
+        <a href="/real_author/"><span class="authorUser">本物</span></a>
+      </div>
+    `;
+    const rows = parseFollowListHtml(html);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.authorId, "real_author");
+    assert.equal(rows[0]?.displayName, "本物");
+  });
+
+  it("dedupes by slug and prefers real displayName over slug fallback", () => {
+    const html = `
+      <a href="/dup/"><span class="authorUser">dup</span></a>
+      <a href="/dup/"><span class="authorUser">表示名</span></a>
+      <a href="/onlyslug/" class="authorUser"></a>
+    `;
+    const rows = parseFollowListHtml(html);
+    const dup = rows.find((r) => r.authorId === "dup");
+    assert.equal(dup?.displayName, "表示名");
+    const only = rows.find((r) => r.authorId === "onlyslug");
+    // empty authorUser → fallback to slug
+    assert.equal(only?.displayName, "onlyslug");
+  });
+
+  it("handles multiple authors and absolute hrefs", () => {
+    const html = `
+      <li data-userid="1"><a href="/aaa/"><span class="authorUser">A</span></a></li>
+      <li data-userid="2"><a href="https://erovoice-ch.com/bbb/"><span class="authorUser">B</span></a></li>
+      <li data-userid="3"><a href="/ccc/"><span class="authorUser">C</span></a></li>
+      <li data-userid="1"><a href="/aaa/"><span class="authorUser">A</span></a></li>
+    `;
+    const rows = parseFollowListHtml(html);
+    assert.equal(rows.length, 3);
+    assert.deepEqual(
+      rows.map((r) => r.authorId).sort(),
+      ["aaa", "bbb", "ccc"],
+    );
+  });
+
+  it("parseProfileDisplayName prefers authorUser heading", () => {
+    const html = `
+      <html><head><title>よぞらさん | エロボイスちゃんねる</title></head>
+      <body><h1 class="authorUser">よぞらさん</h1></body></html>
+    `;
+    assert.equal(parseProfileDisplayName(html, "yozora_0508_y"), "よぞらさん");
   });
 });

@@ -10,6 +10,7 @@ import { Readable } from "node:stream";
 import { z } from "zod";
 import type {
   AuthMode,
+  AuthorSearchHit,
   LiveFolloweeAuthorPublic,
   LiveFolloweeHistoryPublic,
   LiveJobState,
@@ -20,6 +21,8 @@ import type {
   ProviderAccountPublic,
   ProviderId,
   SettingsPublic,
+  SubscriptionImportProviderResult,
+  SubscriptionImportResult,
   WorkPublic,
 } from "@erolib/shared";
 import { PROVIDER_IDS } from "@erolib/shared";
@@ -50,15 +53,23 @@ import {
   settings,
   syncRuns,
   works,
-  type ProviderAccountRow,
 } from "./db/schema.js";
 import type { LiveHistorySyncer } from "./jobs/live-history-sync.js";
 import type { LivePoller } from "./jobs/live-poller.js";
 import type { JobRunner } from "./jobs/runner.js";
+import { ensureProviderSession } from "./providers/ensure-session.js";
 import { getProvider } from "./providers/index.js";
 import {
+  listErovoiceFolloweeAuthors,
+  searchErovoiceAuthors,
+} from "./providers/erovoice.js";
+import { searchKoeKoeAuthors } from "./providers/koekoe.js";
+import {
+  listFolloweeAuthors,
   listFolloweeLivestreams,
   resolveAuthorByInput,
+  resolveSelfAuthorId,
+  searchAuthors as searchOtobananaAuthors,
 } from "./providers/otobanana-live.js";
 import { sessionData } from "./providers/types.js";
 import { liveMediaDir, mediaWorkDir, pathExists } from "./storage/paths.js";
@@ -80,7 +91,8 @@ type AuthEnv = {
 
 const ProviderBody = z.object({
   provider: z.enum(["otobanana", "koekoe", "erovoice"]),
-  enabled: z.boolean().optional(),
+  enabled: z.boolean().optional(), // legacy; no longer gates business logic
+  favoriteSyncEnabled: z.boolean().optional(),
   authMode: z.enum(["password", "cookie"]),
   username: z.string().optional(),
   password: z.string().optional(),
@@ -88,7 +100,8 @@ const ProviderBody = z.object({
 });
 
 const ProviderPatch = z.object({
-  enabled: z.boolean().optional(),
+  enabled: z.boolean().optional(), // legacy no-op for business; may still write column
+  favoriteSyncEnabled: z.boolean().optional(),
   authMode: z.enum(["password", "cookie"]).optional(),
   username: z.string().optional(),
   password: z.string().optional(),
@@ -125,6 +138,7 @@ function toPublicAccount(
     id: row.id,
     provider: row.provider as ProviderId,
     enabled: row.enabled,
+    favoriteSyncEnabled: row.favoriteSyncEnabled,
     authMode: row.authMode as AuthMode,
     username: row.username,
     status: row.status as ProviderAccountPublic["status"],
@@ -363,7 +377,8 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
         .insert(providerAccounts)
         .values({
           provider: data.provider,
-          enabled: data.enabled ?? true,
+          enabled: true,
+          favoriteSyncEnabled: data.favoriteSyncEnabled ?? true,
           authMode: data.authMode,
           username: data.username ?? null,
           encryptedPayload: JSON.stringify(encrypted),
@@ -406,7 +421,13 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       const [row] = await db
         .update(providerAccounts)
         .set({
-          enabled: parsed.data.enabled ?? existing.enabled,
+          // enabled is legacy; only write if client still sends it
+          ...(parsed.data.enabled !== undefined
+            ? { enabled: parsed.data.enabled }
+            : {}),
+          ...(parsed.data.favoriteSyncEnabled !== undefined
+            ? { favoriteSyncEnabled: parsed.data.favoriteSyncEnabled }
+            : {}),
           updatedAt: new Date().toISOString(),
         })
         .where(eq(providerAccounts.id, id))
@@ -451,7 +472,12 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     const [row] = await db
       .update(providerAccounts)
       .set({
-        enabled: parsed.data.enabled ?? existing.enabled,
+        ...(parsed.data.enabled !== undefined
+          ? { enabled: parsed.data.enabled }
+          : {}),
+        ...(parsed.data.favoriteSyncEnabled !== undefined
+          ? { favoriteSyncEnabled: parsed.data.favoriteSyncEnabled }
+          : {}),
         authMode: next.mode,
         username: next.username ?? null,
         encryptedPayload: JSON.stringify(
@@ -545,6 +571,29 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       })
       .safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid body" }, 400);
+    // Single-provider: fail when neither favorites nor author-work sync applies.
+    if (parsed.data.provider) {
+      const [account] = await db
+        .select()
+        .from(providerAccounts)
+        .where(eq(providerAccounts.provider, parsed.data.provider))
+        .limit(1);
+      if (account && !account.favoriteSyncEnabled) {
+        const [hasAuthor] = await db
+          .select({ id: liveSubscriptions.id })
+          .from(liveSubscriptions)
+          .where(
+            and(
+              eq(liveSubscriptions.provider, parsed.data.provider),
+              eq(liveSubscriptions.syncWorks, true),
+            ),
+          )
+          .limit(1);
+        if (!hasAuthor) {
+          return c.json({ error: "该渠道已关闭收藏同步" }, 400);
+        }
+      }
+    }
     // fire and track via sync_runs
     void runner.triggerSync(parsed.data.provider);
     return c.json({ ok: true, started: true });
@@ -798,6 +847,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       username: row.username,
       displayName: row.displayName,
       enabled: row.enabled,
+      syncWorks: row.syncWorks,
       lastOnairAt: row.lastOnairAt,
       lastRoomId: row.lastRoomId,
       lastCheckAt: row.lastCheckAt,
@@ -854,24 +904,6 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     };
   }
 
-  function parseSessionBlob(blob: string | null): Session | null {
-    if (!blob) return null;
-    try {
-      const parsed: unknown = JSON.parse(blob);
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        "provider" in parsed &&
-        "data" in parsed
-      ) {
-        return parsed as Session;
-      }
-    } catch {
-      return null;
-    }
-    return null;
-  }
-
   async function ensureOtobananaSession(): Promise<Session> {
     const [account] = await db
       .select()
@@ -881,60 +913,8 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     if (!account) {
       throw new Error("Otobanana provider account not configured");
     }
-    if (!account.enabled) {
-      throw new Error("Otobanana provider account is disabled");
-    }
-    return ensureProviderSession(account);
-  }
-
-  async function ensureProviderSession(
-    account: ProviderAccountRow,
-  ): Promise<Session> {
-    const provider = getProvider(account.provider as ProviderId);
-    let creds: CredentialPayload;
-    try {
-      const raw: unknown = JSON.parse(account.encryptedPayload);
-      if (!raw || typeof raw !== "object" || !("v" in raw) || !("data" in raw)) {
-        throw new Error("Invalid credential blob");
-      }
-      creds = decryptJson<CredentialPayload>(
-        config.credentialsSecret,
-        raw as EncryptedBlob,
-      );
-    } catch {
-      throw new Error("Failed to decrypt provider credentials");
-    }
-    const existing = parseSessionBlob(account.sessionBlob);
-    if (existing) {
-      try {
-        if (await provider.isSessionValid(existing)) {
-          return existing;
-        }
-      } catch {
-        // re-login
-      }
-    }
-    const auth: ProviderAuth = {
-      mode: creds.mode,
-      username: creds.username,
-      password: creds.password,
-      cookieHeader: creds.cookieHeader,
-    };
-    const session = await provider.login(auth);
-    const now = new Date()
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d{3}Z$/, "");
-    await db
-      .update(providerAccounts)
-      .set({
-        sessionBlob: JSON.stringify(session),
-        status: "ok",
-        statusMessage: null,
-        updatedAt: now,
-      })
-      .where(eq(providerAccounts.id, account.id));
-    return session;
+    // Account `enabled` no longer gates live session / followee APIs.
+    return ensureProviderSession(db, config, account);
   }
 
   app.get("/api/live/subscriptions", async (c) => {
@@ -945,59 +925,392 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     return c.json(rows.map(toLiveSubscription));
   });
 
+  /** Author search for manual subscribe (partial match / list candidates). */
+  app.get("/api/authors/search", async (c) => {
+    const providerRaw = c.req.query("provider")?.trim() ?? "";
+    const q = c.req.query("q")?.trim() ?? "";
+    if (!q) {
+      return c.json({ error: "q is required" }, 400);
+    }
+    const providerParsed = z
+      .enum(["otobanana", "koekoe", "erovoice"])
+      .safeParse(providerRaw);
+    if (!providerParsed.success) {
+      return c.json({ error: "provider is required" }, 400);
+    }
+    const provider = providerParsed.data as ProviderId;
+
+    try {
+      let hits: AuthorSearchHit[] = [];
+
+      if (provider === "otobanana") {
+        let token: string | null = null;
+        try {
+          const session = await ensureOtobananaSession();
+          token = sessionData(session).accessToken ?? null;
+        } catch {
+          // public search allowed
+        }
+        const rows = await searchOtobananaAuthors(q, token, { limit: 20 });
+        hits = rows.map((r) => ({
+          provider,
+          authorId: r.authorId,
+          username: r.username,
+          displayName: r.displayName,
+        }));
+      } else if (provider === "koekoe") {
+        let cookie: string | null = null;
+        try {
+          const [account] = await db
+            .select()
+            .from(providerAccounts)
+            .where(eq(providerAccounts.provider, "koekoe"))
+            .limit(1);
+          if (account) {
+            const session = await ensureProviderSession(db, config, account);
+            cookie = sessionData(session).cookieHeader ?? null;
+          }
+        } catch {
+          // public search
+        }
+        const rows = await searchKoeKoeAuthors(q, cookie);
+        hits = rows.map((r) => ({
+          provider,
+          authorId: r.authorId,
+          username: r.username,
+          displayName: r.displayName,
+        }));
+      } else {
+        let cookie: string | null = null;
+        try {
+          const [account] = await db
+            .select()
+            .from(providerAccounts)
+            .where(eq(providerAccounts.provider, "erovoice"))
+            .limit(1);
+          if (account) {
+            const session = await ensureProviderSession(db, config, account);
+            cookie = sessionData(session).cookieHeader ?? null;
+          }
+        } catch {
+          // public search
+        }
+        const rows = await searchErovoiceAuthors(q, cookie);
+        hits = rows.map((r) => ({
+          provider,
+          authorId: r.authorId,
+          username: r.username,
+          displayName: r.displayName,
+        }));
+      }
+
+      return c.json(hits);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 400);
+    }
+  });
+
   app.post("/api/live/subscriptions", async (c) => {
     const body: unknown = await c.req.json().catch(() => ({}));
     const parsed = z
       .object({
-        input: z.string().min(1),
+        input: z.string().min(1).optional(),
+        authorId: z.string().min(1).optional(),
+        username: z.string().nullable().optional(),
+        displayName: z.string().nullable().optional(),
+        provider: z.enum(["otobanana", "koekoe", "erovoice"]).optional(),
+        syncWorks: z.boolean().optional(),
+        enabled: z.boolean().optional(),
       })
       .safeParse(body);
     if (!parsed.success) {
-      return c.json({ error: "input is required" }, 400);
+      return c.json({ error: "authorId or input is required" }, 400);
     }
-    let token: string | null = null;
-    try {
-      const session = await ensureOtobananaSession();
-      token = sessionData(session).accessToken ?? null;
-    } catch {
-      // anonymous resolve is fine for public search/onair
+    const hasAuthorId = Boolean(parsed.data.authorId?.trim());
+    const hasInput = Boolean(parsed.data.input?.trim());
+    if (!hasAuthorId && !hasInput) {
+      return c.json({ error: "authorId or input is required" }, 400);
     }
+    const provider = (parsed.data.provider ?? "otobanana") as ProviderId;
+    // Manual add: default both flags off (user enables explicitly).
+    const syncWorks = parsed.data.syncWorks ?? false;
+    const enabled = parsed.data.enabled ?? false;
+    if (enabled && provider !== "otobanana") {
+      return c.json(
+        { error: "自动录制仅支持 otobanana" },
+        400,
+      );
+    }
+
+    const now = new Date()
+      .toISOString()
+      .replace("T", " ")
+      .replace(/\.\d{3}Z$/, "");
+
     try {
-      const author = await resolveAuthorByInput(parsed.data.input, token);
-      const now = new Date()
-        .toISOString()
-        .replace("T", " ")
-        .replace(/\.\d{3}Z$/, "");
+      let authorId: string;
+      let username: string | null = null;
+      let displayName: string | null = null;
+
+      if (hasAuthorId) {
+        // Selected from our search results — trust client fields.
+        authorId = parsed.data.authorId!.trim();
+        username =
+          parsed.data.username !== undefined && parsed.data.username !== null
+            ? parsed.data.username.trim() || null
+            : authorId;
+        displayName =
+          parsed.data.displayName !== undefined &&
+          parsed.data.displayName !== null
+            ? parsed.data.displayName.trim() || null
+            : username;
+      } else if (provider === "otobanana") {
+        let token: string | null = null;
+        try {
+          const session = await ensureOtobananaSession();
+          token = sessionData(session).accessToken ?? null;
+        } catch {
+          // anonymous resolve is fine for public search/onair
+        }
+        const author = await resolveAuthorByInput(parsed.data.input!, token);
+        authorId = author.authorId;
+        username = author.username;
+        displayName = author.displayName;
+      } else {
+        // koekoe: author display name for search.php?m=1
+        // erovoice: author slug for /{slug}/
+        const trimmed = parsed.data.input!.trim().replace(/^\/+|\/+$/g, "");
+        if (!trimmed) {
+          return c.json({ error: "input is required" }, 400);
+        }
+        authorId = trimmed;
+        username = trimmed;
+        displayName = trimmed;
+      }
+
       try {
         await db.insert(liveSubscriptions).values({
-          provider: "otobanana",
-          authorId: author.authorId,
-          username: author.username,
-          displayName: author.displayName,
-          enabled: true,
+          provider,
+          authorId,
+          username,
+          displayName,
+          enabled: provider === "otobanana" ? enabled : false,
+          syncWorks,
           createdAt: now,
           updatedAt: now,
         });
       } catch {
-        return c.json({ error: "Author already in live subscription list" }, 409);
+        return c.json(
+          { error: "Author already in subscription list" },
+          409,
+        );
       }
       const [row] = await db
         .select()
         .from(liveSubscriptions)
         .where(
           and(
-            eq(liveSubscriptions.provider, "otobanana"),
-            eq(liveSubscriptions.authorId, author.authorId),
+            eq(liveSubscriptions.provider, provider),
+            eq(liveSubscriptions.authorId, authorId),
           ),
         )
         .limit(1);
       if (!row) return c.json({ error: "Failed to create subscription" }, 500);
-      await livePoller.pollNow();
+      if (provider === "otobanana" && row.enabled) {
+        await livePoller.pollNow();
+      }
       return c.json(toLiveSubscription(row), 201);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
     }
+  });
+
+  /** Import platform followees into subscription list (flags default off). */
+  app.post("/api/live/subscriptions/import-followees", async (c) => {
+    const now = new Date()
+      .toISOString()
+      .replace("T", " ")
+      .replace(/\.\d{3}Z$/, "");
+    const results: SubscriptionImportProviderResult[] = [];
+    let totalImported = 0;
+
+    // --- Otobanana ---
+    {
+      const r: SubscriptionImportProviderResult = {
+        provider: "otobanana",
+        imported: 0,
+        existing: 0,
+        fetched: 0,
+        skipped: null,
+        error: null,
+      };
+      try {
+        const [account] = await db
+          .select()
+          .from(providerAccounts)
+          .where(eq(providerAccounts.provider, "otobanana"))
+          .limit(1);
+        if (!account) {
+          r.skipped = "未配置账号";
+        } else {
+          const session = await ensureProviderSession(db, config, account);
+          const token = sessionData(session).accessToken;
+          if (!token) {
+            r.skipped = "无有效会话";
+          } else {
+            const selfId = await resolveSelfAuthorId(
+              token,
+              sessionData(session).userId,
+            );
+            const followees = await listFolloweeAuthors(token, selfId, {
+              maxPages: 50,
+            });
+            r.fetched = followees.length;
+            for (const f of followees) {
+              const [exist] = await db
+                .select({ id: liveSubscriptions.id })
+                .from(liveSubscriptions)
+                .where(
+                  and(
+                    eq(liveSubscriptions.provider, "otobanana"),
+                    eq(liveSubscriptions.authorId, f.authorId),
+                  ),
+                )
+                .limit(1);
+              if (exist) {
+                r.existing += 1;
+                continue;
+              }
+              try {
+                await db.insert(liveSubscriptions).values({
+                  provider: "otobanana",
+                  authorId: f.authorId,
+                  username: f.username,
+                  displayName: f.displayName,
+                  enabled: false,
+                  syncWorks: false,
+                  createdAt: now,
+                  updatedAt: now,
+                });
+                r.imported += 1;
+              } catch {
+                r.existing += 1;
+              }
+            }
+          }
+        }
+      } catch (err) {
+        r.error = err instanceof Error ? err.message : String(err);
+      }
+      totalImported += r.imported;
+      results.push(r);
+    }
+
+    // --- Erovoice ---
+    {
+      const r: SubscriptionImportProviderResult = {
+        provider: "erovoice",
+        imported: 0,
+        existing: 0,
+        fetched: 0,
+        skipped: null,
+        error: null,
+      };
+      try {
+        const [account] = await db
+          .select()
+          .from(providerAccounts)
+          .where(eq(providerAccounts.provider, "erovoice"))
+          .limit(1);
+        if (!account) {
+          r.skipped = "未配置账号";
+        } else {
+          const session = await ensureProviderSession(db, config, account);
+          const followees = await listErovoiceFolloweeAuthors(session);
+          r.fetched = followees.length;
+          for (const f of followees) {
+            const [exist] = await db
+              .select({
+                id: liveSubscriptions.id,
+                username: liveSubscriptions.username,
+                displayName: liveSubscriptions.displayName,
+              })
+              .from(liveSubscriptions)
+              .where(
+                and(
+                  eq(liveSubscriptions.provider, "erovoice"),
+                  eq(liveSubscriptions.authorId, f.authorId),
+                ),
+              )
+              .limit(1);
+            if (exist) {
+              r.existing += 1;
+              // Re-import: refresh displayName/username when parse has a better name.
+              // Keep enabled / syncWorks flags unchanged.
+              const betterName =
+                f.displayName &&
+                f.displayName.trim() &&
+                f.displayName !== f.authorId &&
+                (!exist.displayName ||
+                  exist.displayName === f.authorId ||
+                  exist.displayName === exist.username);
+              const betterUser =
+                f.username &&
+                f.username.trim() &&
+                (!exist.username || exist.username !== f.username);
+              if (betterName || betterUser) {
+                await db
+                  .update(liveSubscriptions)
+                  .set({
+                    ...(betterUser ? { username: f.username } : {}),
+                    ...(betterName ? { displayName: f.displayName } : {}),
+                    updatedAt: now,
+                  })
+                  .where(eq(liveSubscriptions.id, exist.id));
+              }
+              continue;
+            }
+            try {
+              await db.insert(liveSubscriptions).values({
+                provider: "erovoice",
+                authorId: f.authorId,
+                username: f.username,
+                displayName: f.displayName,
+                enabled: false,
+                syncWorks: false,
+                createdAt: now,
+                updatedAt: now,
+              });
+              r.imported += 1;
+            } catch {
+              r.existing += 1;
+            }
+          }
+        }
+      } catch (err) {
+        r.error = err instanceof Error ? err.message : String(err);
+      }
+      totalImported += r.imported;
+      results.push(r);
+    }
+
+    // --- Koe-koe: no platform follow list ---
+    results.push({
+      provider: "koekoe",
+      imported: 0,
+      existing: 0,
+      fetched: 0,
+      skipped: "该渠道无关注列表 API，请手动添加",
+      error: null,
+    });
+
+    const payload: SubscriptionImportResult = {
+      providers: results,
+      totalImported,
+    };
+    return c.json(payload);
   });
 
   app.patch("/api/live/subscriptions/:id", async (c) => {
@@ -1007,12 +1320,31 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     const parsed = z
       .object({
         enabled: z.boolean().optional(),
+        syncWorks: z.boolean().optional(),
       })
       .safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid body" }, 400);
-    if (parsed.data.enabled === undefined) {
+    if (
+      parsed.data.enabled === undefined &&
+      parsed.data.syncWorks === undefined
+    ) {
       return c.json({ error: "No fields to update" }, 400);
     }
+
+    const [existing] = await db
+      .select()
+      .from(liveSubscriptions)
+      .where(eq(liveSubscriptions.id, id))
+      .limit(1);
+    if (!existing) return c.json({ error: "Not found" }, 404);
+
+    if (
+      parsed.data.enabled === true &&
+      existing.provider !== "otobanana"
+    ) {
+      return c.json({ error: "自动录制仅支持 otobanana" }, 400);
+    }
+
     const now = new Date()
       .toISOString()
       .replace("T", " ")
@@ -1020,7 +1352,12 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     await db
       .update(liveSubscriptions)
       .set({
-        enabled: parsed.data.enabled,
+        ...(parsed.data.enabled !== undefined
+          ? { enabled: parsed.data.enabled }
+          : {}),
+        ...(parsed.data.syncWorks !== undefined
+          ? { syncWorks: parsed.data.syncWorks }
+          : {}),
         updatedAt: now,
       })
       .where(eq(liveSubscriptions.id, id));
@@ -1204,6 +1541,8 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
           username: author.username,
           displayName: author.displayName,
           enabled: true,
+          // Followee select is live-oriented; do not surprise-download VOD.
+          syncWorks: false,
           createdAt: now,
           updatedAt: now,
         });

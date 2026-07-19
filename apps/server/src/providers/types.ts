@@ -13,6 +13,14 @@ export interface Provider {
   login(auth: ProviderAuth): Promise<Session>;
   isSessionValid(session: Session): Promise<boolean>;
   listFavorites(session: Session): AsyncIterable<RemoteWorkRef>;
+  /**
+   * Yield works for one author. `authorId` is provider-native
+   * (otobanana UUID, koekoe author search name, erovoice slug).
+   */
+  listAuthorWorks(
+    session: Session,
+    authorId: string,
+  ): AsyncIterable<RemoteWorkRef>;
   getWork(session: Session, workId: string): Promise<WorkMetadata>;
   download(
     session: Session,

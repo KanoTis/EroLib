@@ -35,15 +35,16 @@ POST   /api/providers/:id/test
 | username | string? | required for password |
 | password | string? | required for password |
 | cookieHeader | string? | required for cookie |
-| enabled | boolean? | default true |
+| enabled | boolean? | **legacy**; column still written (default true); **does not gate** VOD sync / live session |
+| favoriteSyncEnabled | boolean? | default true; gates **VOD favorites sync only** |
 
-**Request (patch body)** — partial; credential rebuild when any of `authMode`, `password`, `cookieHeader`, or `username !== undefined`.
+**Request (patch body)** — partial; credential rebuild when any of `authMode`, `password`, `cookieHeader`, or `username !== undefined`. May include `favoriteSyncEnabled` and/or legacy `enabled` without external login.
 
 **Success response**
 
-- Create: `201` + `ProviderAccountPublic` with `status: "ok"`, `sessionBlob` persisted server-side.
+- Create: `201` + `ProviderAccountPublic` with `status: "ok"`, `sessionBlob` persisted server-side, `favoriteSyncEnabled` present.
 - Patch (creds): `200` + public account `status: "ok"`.
-- Patch (enabled only): `200`, no external login.
+- Patch (`favoriteSyncEnabled` / legacy `enabled` only): `200`, no external login.
 
 **Failure response**
 
@@ -61,15 +62,17 @@ POST   /api/providers/:id/test
 | `login` throws / network auth fail | 400 | no | `{ error: <provider message> }` |
 | `isSessionValid` false | 400 | no | `{ error: "Session invalid after login" }` |
 | UNIQUE provider conflict | 409 | n/a | `{ error: "Provider already configured" }` |
-| PATCH enabled only | 200 | enabled only | public account |
+| PATCH `favoriteSyncEnabled` only | 200 | that column only | public account; no login |
+| PATCH legacy `enabled` only | 200 | may write column | **no** effect on runSync / live (business ignores) |
 | test endpoint fail | 400 | updates `status=error` + `statusMessage` | `{ ok: false, error }` |
 | test endpoint ok | 200 | session + `status=ok` | `{ ok: true }` |
 
 ### 5. Good / Base / Bad Cases
 
 - **Good**: valid password or cookie → create returns 201, list shows `status=ok`.
-- **Base**: PATCH `{ enabled: false }` → no provider login, only toggles enabled.
+- **Base**: PATCH `{ favoriteSyncEnabled: false }` → no provider login; VOD `runSync` skips that provider; live poller/session still work.
 - **Bad**: wrong password create → 400, **no** `provider_accounts` row; wrong cookie PATCH → 400, old encrypted payload unchanged.
+- **Bad**: gating live/session on `provider_accounts.enabled` → closing “account” wrongly blocks recording while user only meant to pause VOD sync.
 
 ### 6. Tests Required
 
@@ -77,7 +80,8 @@ POST   /api/providers/:id/test
   - Mock `getProvider().login` reject → POST no insert (assert row count / select empty).
   - Mock login+valid → POST insert `status=ok` + `sessionBlob` non-null.
   - PATCH creds with mock fail → encrypted payload bytes unchanged.
-  - PATCH enabled only → mock login not called.
+  - PATCH `favoriteSyncEnabled` only → mock login not called.
+  - Live path with `enabled=false` still resolves session (business no longer reads `enabled`).
 - Frontend: create failure surfaces `error` string; success message indicates verified.
 
 ### 7. Wrong vs Correct
@@ -182,3 +186,84 @@ sessionBlob: encryptSession(secret, verified.session),
 **Decision**: Treat `sessionBlob` as secret material. Encrypt at rest with the same key material as `encryptedPayload`; support one-shot legacy plaintext read + rewrite.
 
 **Why**: `app.db` / volume exposure must not yield usable third-party sessions.
+
+## Scenario: Favorite sync flag vs legacy account enabled
+
+### 1. Scope / Trigger
+
+- Trigger: VOD `runSync` account selection; live-poller / live-history-sync / `ensureOtobananaSession` account load; Providers UI; Sync page per-channel toggle.
+- Cross-layer: `ProviderAccountPublic.favoriteSyncEnabled` must match DB `favorite_sync_enabled`.
+
+### 2. Signatures
+
+```ts
+// DB: provider_accounts
+// favorite_sync_enabled INTEGER NOT NULL DEFAULT 1
+// enabled INTEGER NOT NULL DEFAULT 1  -- legacy, not business gate
+
+// Shared
+interface ProviderAccountPublic {
+  enabled: boolean; // legacy echo
+  favoriteSyncEnabled: boolean;
+  // ...
+}
+
+// migrate (apps/server/src/db/client.ts)
+// If column missing: ADD COLUMN favorite_sync_enabled ... DEFAULT 1
+// Then: UPDATE provider_accounts SET favorite_sync_enabled = enabled
+```
+
+### 3. Contracts
+
+| Consumer | Gate |
+|----------|------|
+| `JobRunner.runSync` | only rows with `favorite_sync_enabled = true` |
+| Single-provider `POST /api/sync?provider=` when that account has favorite sync off | `400` `{ error: "该渠道已关闭收藏同步" }` (or equivalent) |
+| Full sync | skip disabled-favorite channels (no hard fail for whole run) |
+| live-poller / live-history-sync / live session | account must **exist**; **do not** require `enabled` |
+| Auto-record list | still `live_subscriptions.enabled = true` (separate flag) |
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|-----------|--------|
+| `favoriteSyncEnabled=false`, full sync | provider skipped |
+| `favoriteSyncEnabled=false`, sync that provider only | 400 |
+| `enabled=false`, live poll | still uses account credentials |
+| migrate second start | no error; column already present |
+
+### 5. Good / Base / Bad Cases
+
+- **Good**: toggle favorite sync off on Sync VOD tab → immediate full sync skips that provider; live still records subscribed authors.
+- **Base**: new account → `favoriteSyncEnabled=true`, participates in sync.
+- **Bad**: `runSync` still filters on `enabled` → Providers “remove enable UI” becomes a lie and old disabled accounts stay out of sync forever or live breaks.
+
+### 6. Tests Required
+
+- Unit/integration when added: runSync filter uses `favoriteSyncEnabled`.
+- Manual: migrate old DB once + restart (idempotent ADD).
+- Manual: `enabled=0` row still serves live session after upgrade.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+.where(eq(providerAccounts.enabled, true)); // VOD sync
+if (!account.enabled) throw new Error("disabled"); // live session
+```
+
+#### Correct
+
+```ts
+.where(eq(providerAccounts.favoriteSyncEnabled, true)); // VOD only
+// live: account row present is enough for credentials
+```
+
+## Design Decision: Split favorite sync from account availability
+
+**Context**: One `enabled` bit gated VOD sync, live poller, history sync, and session — Providers UI “disable” was an account kill switch.
+
+**Decision**: Add `favorite_sync_enabled` for VOD favorites participation only. Keep `enabled` column for DB compat but stop using it as a business gate. Remove Providers enable/disable UI; expose favorite toggle on Sync VOD tab.
+
+**Why**: User can pause VOD favorites sync without disabling live auto-record credentials.

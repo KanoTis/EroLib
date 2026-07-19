@@ -296,6 +296,40 @@ a:hover {
   flex-wrap: wrap;
 }
 
+.tabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.2rem;
+  margin-bottom: 1rem;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.tab {
+  min-height: 36px;
+  padding: 0.4rem 0.9rem;
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  border-radius: calc(var(--radius-sm) - 2px);
+  font-weight: 500;
+}
+
+.tab:hover:not(:disabled) {
+  background: var(--panel-hover);
+  color: var(--text);
+  filter: none;
+}
+
+.tab.active {
+  background: var(--panel);
+  color: var(--accent-hover);
+  border-color: rgba(249, 115, 22, 0.35);
+  box-shadow: 0 0 0 1px rgba(249, 115, 22, 0.18);
+}
+
 .toolbar-search {
   min-width: 220px;
 }
@@ -470,6 +504,33 @@ button.danger:hover:not(:disabled) {
 button.icon-btn {
   width: 44px;
   padding: 0;
+}
+
+/* React Router Link styled as primary/secondary button */
+a.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  min-height: 44px;
+  padding: 0.55rem 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: linear-gradient(180deg, var(--accent-hover), var(--accent));
+  color: #0f172a;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+a.button.secondary {
+  background: var(--panel);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+a.button.secondary:hover {
+  background: var(--panel-hover);
 }
 
 

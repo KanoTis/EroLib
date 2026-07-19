@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/vod-sync-local-media.md", "reason": "Verify favorite_sync gate does not break VOD sync local-media contract"}
+{"file": ".trellis/spec/backend/live-media-library.md", "reason": "Verify live media/job operations remain after LivePage slim-down"}
+{"file": ".trellis/spec/backend/provider-account-credentials.md", "reason": "Verify enabled removal does not block live session/credentials"}
+{"file": ".trellis/spec/frontend/global-audio-player.md", "reason": "Verify live playback still wires to global player"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend consistency and forbidden patterns"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend consistency for migrate and API public types"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer check: shared types, API, three pages"}

@@ -6,7 +6,6 @@ import type {
   LiveJobState,
   LiveOnairPublic,
   LiveRecordJobPublic,
-  LiveSubscriptionPublic,
 } from "@erolib/shared";
 import { api } from "../api";
 import { IconPlay, IconRefresh } from "../components/Icons";
@@ -14,29 +13,21 @@ import { usePlayer } from "../player/PlayerContext";
 
 export function LivePage() {
   const { play } = usePlayer();
-  const [subs, setSubs] = useState<LiveSubscriptionPublic[]>([]);
   const [followees, setFollowees] = useState<LiveOnairPublic[]>([]);
   const [history, setHistory] = useState<LiveFolloweeAuthorPublic[]>([]);
   const [historyMeta, setHistoryMeta] = useState<
     Pick<LiveFolloweeHistoryPublic, "syncedAt" | "lastError" | "syncing">
   >({ syncedAt: null, lastError: null, syncing: false });
   const [jobs, setJobs] = useState<LiveRecordJobPublic[]>([]);
-  const [input, setInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [followeeError, setFolloweeError] = useState<string | null>(null);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [historySyncing, setHistorySyncing] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  async function loadCore(): Promise<void> {
-    const [s, j] = await Promise.all([
-      api.liveSubscriptions(),
-      api.liveJobs(),
-    ]);
-    setSubs(s);
-    setJobs(j);
+  async function loadJobs(): Promise<void> {
+    setJobs(await api.liveJobs());
   }
 
   async function loadFollowees(): Promise<void> {
@@ -68,34 +59,8 @@ export function LivePage() {
     }
   }
 
-  /** Ask server to crawl Otobanana in background; UI keeps reading local cache. */
-  async function onSyncHistory(): Promise<void> {
-    setHistorySyncing(true);
-    setHistoryError(null);
-    try {
-      await api.syncLiveFolloweeHistory();
-      setMsg("已请求后台同步关注历史（不阻塞页面，稍后自动更新）");
-      // Poll local cache a few times while sync may still be running.
-      for (let i = 0; i < 8; i++) {
-        await new Promise((r) => setTimeout(r, 1500));
-        const data = await api.liveFolloweeHistory();
-        setHistory(data.authors);
-        setHistoryMeta({
-          syncedAt: data.syncedAt,
-          lastError: data.lastError,
-          syncing: data.syncing,
-        });
-        if (!data.syncing) break;
-      }
-    } catch (e: unknown) {
-      setHistoryError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setHistorySyncing(false);
-    }
-  }
-
   async function refreshAll(): Promise<void> {
-    await loadCore();
+    await loadJobs();
     await Promise.all([loadFollowees(), loadHistory()]);
   }
 
@@ -104,78 +69,17 @@ export function LivePage() {
       setError(e instanceof Error ? e.message : String(e)),
     );
     const t = setInterval(() => {
-      void loadCore().catch(() => undefined);
+      void loadJobs().catch(() => undefined);
     }, 4000);
     return () => clearInterval(t);
   }, []);
-
-  async function onAdd(): Promise<void> {
-    const value = input.trim();
-    if (!value) return;
-    setBusy(true);
-    setError(null);
-    setMsg(null);
-    try {
-      await api.addLiveSubscription(value);
-      setInput("");
-      setMsg("已加入自动录制名单");
-      await refreshAll();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onDelete(id: number): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.deleteLiveSubscription(id);
-      await loadCore();
-      await loadHistory();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onToggle(id: number, enabled: boolean): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.patchLiveSubscription(id, { enabled });
-      await loadCore();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onSelect(authorId: string): Promise<void> {
-    setBusy(true);
-    setError(null);
-    setMsg(null);
-    try {
-      await api.selectLiveFollowee(authorId);
-      setMsg("已从关注列表选定录制");
-      await refreshAll();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function onPoll(): Promise<void> {
     setBusy(true);
     setError(null);
     try {
       await api.livePoll();
-      await loadCore();
-      // Local history cache is independent of onair poll.
+      await loadJobs();
       await loadHistory();
       setMsg("已触发一轮检测");
     } catch (e: unknown) {
@@ -219,8 +123,7 @@ export function LivePage() {
           <p className="page-kicker">Otobanana Live</p>
           <h1>直播自动录制</h1>
           <p className="page-desc">
-            手动选定作者后轮询开播；Phase 1 创建录制任务占位（媒体协议未通时为
-            pending_media）。下方可查看关注作者近期场次与录制状态。
+            查看关注在播与近期历史（只读），并管理录制任务。订阅作者请到「同步」页维护。
           </p>
         </div>
         <div className="toolbar">
@@ -239,7 +142,6 @@ export function LivePage() {
       </header>
 
       <div className="stat-pills" style={{ marginBottom: "1rem" }}>
-        <span className="badge soft">选定 {subs.length}</span>
         <span className="badge queued">进行中任务 {openJobs}</span>
         <span className="badge soft">任务总计 {jobs.length}</span>
         <span className="badge soft">关注作者 {history.length}</span>
@@ -257,119 +159,6 @@ export function LivePage() {
           </p>
         ) : null}
       </div>
-
-      <section className="card">
-        <div className="card-header">
-          <h2>选定作者（自动录制）</h2>
-        </div>
-        <div className="form-grid" style={{ marginBottom: "1rem" }}>
-          <label className="field" style={{ gridColumn: "1 / -1" }}>
-            UUID 或 username
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="hideyooooooooo 或 802b8dfd-..."
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void onAdd();
-              }}
-            />
-          </label>
-        </div>
-        <div className="toolbar" style={{ marginBottom: "1rem" }}>
-          <button
-            type="button"
-            disabled={busy || !input.trim()}
-            onClick={() => {
-              void onAdd();
-            }}
-          >
-            添加
-          </button>
-        </div>
-        <div className="table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>作者</th>
-                <th>状态</th>
-                <th>最近在播</th>
-                <th>错误</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {subs.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="muted">
-                    暂无选定作者
-                  </td>
-                </tr>
-              ) : (
-                subs.map((s) => (
-                  <tr key={s.id}>
-                    <td>
-                      <div>
-                        <strong>
-                          {s.displayName || s.username || s.authorId}
-                        </strong>
-                      </div>
-                      <div className="muted small">
-                        {s.username ? `@${s.username}` : s.authorId}
-                      </div>
-                    </td>
-                    <td>
-                      <span
-                        className={s.enabled ? "badge queued" : "badge soft"}
-                      >
-                        {s.enabled ? "启用" : "暂停"}
-                      </span>
-                    </td>
-                    <td className="muted small">
-                      {s.lastOnairAt || s.lastRoomId ? (
-                        <>
-                          <div>{s.lastOnairAt || "—"}</div>
-                          {s.lastRoomId ? (
-                            <div title={s.lastRoomId}>
-                              {s.lastRoomId.slice(0, 28)}…
-                            </div>
-                          ) : null}
-                        </>
-                      ) : (
-                        "—"
-                      )}
-                    </td>
-                    <td className="muted small">{s.lastError || "—"}</td>
-                    <td>
-                      <div className="toolbar">
-                        <button
-                          type="button"
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() => {
-                            void onToggle(s.id, !s.enabled);
-                          }}
-                        >
-                          {s.enabled ? "暂停" : "启用"}
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() => {
-                            void onDelete(s.id);
-                          }}
-                        >
-                          移除
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </section>
 
       <section className="card">
         <div className="card-header">
@@ -400,13 +189,12 @@ export function LivePage() {
                 <th>标题</th>
                 <th>听众</th>
                 <th>录制</th>
-                <th />
               </tr>
             </thead>
             <tbody>
               {followees.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="muted">
+                  <td colSpan={4} className="muted">
                     当前无关注在播，或未登录
                   </td>
                 </tr>
@@ -437,21 +225,6 @@ export function LivePage() {
                         <span className="muted small">未录制</span>
                       )}
                     </td>
-                    <td>
-                      {f.selected ? (
-                        <span className="badge soft">已选定</span>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            void onSelect(f.authorId);
-                          }}
-                        >
-                          选定录制
-                        </button>
-                      )}
-                    </td>
                   </tr>
                 ))
               )}
@@ -463,27 +236,14 @@ export function LivePage() {
       <section className="card">
         <div className="card-header">
           <h2>关注作者近期直播</h2>
-          <button
-            type="button"
-            className="secondary"
-            disabled={busy || historyLoading || historySyncing}
-            onClick={() => {
-              void onSyncHistory();
-            }}
-          >
-            <IconRefresh width={14} height={14} />
-            {historySyncing || historyMeta.syncing
-              ? "同步中…"
-              : "后台同步"}
-          </button>
         </div>
         <p className="muted small" style={{ marginBottom: "0.5rem" }}>
-          数据来自本地缓存（后台约每 30 分钟同步官网关注列表与近期场次），打开本页不再实时爬官网。
-          仅展示，不会自动选定。录制状态仍对照本地任务。
+          数据来自本地缓存（后台约每 30 分钟同步官网关注列表与近期场次）。
+          手动触发后台同步请到「设置」页。录制状态对照本地任务。
         </p>
         <p className="muted small" style={{ marginBottom: "0.75rem" }}>
           上次同步：{historyMeta.syncedAt || "尚未同步"}
-          {historyMeta.syncing || historySyncing ? " · 同步进行中" : ""}
+          {historyMeta.syncing ? " · 同步进行中" : ""}
           {historyMeta.lastError
             ? ` · 上次错误：${historyMeta.lastError}`
             : ""}
@@ -491,7 +251,7 @@ export function LivePage() {
         {historyError ? (
           <p className="muted small" role="status">
             无法读取本地关注历史：{historyError}
-            （请确认 server 已迁移数据库；首次需等待后台同步或点「后台同步」）
+            （请确认 server 已迁移数据库；可在设置页触发后台同步）
           </p>
         ) : null}
         <div className="table-wrap">
@@ -501,13 +261,12 @@ export function LivePage() {
                 <th>作者</th>
                 <th>状态</th>
                 <th>近期场次 / 录制</th>
-                <th />
               </tr>
             </thead>
             <tbody>
               {history.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="muted">
+                  <td colSpan={3} className="muted">
                     {historyLoading
                       ? "加载中…"
                       : "暂无关注作者数据，或未登录"}
@@ -574,21 +333,6 @@ export function LivePage() {
                             </li>
                           ))}
                         </ul>
-                      )}
-                    </td>
-                    <td>
-                      {a.selected ? (
-                        <span className="badge soft">已选定</span>
-                      ) : (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => {
-                            void onSelect(a.authorId);
-                          }}
-                        >
-                          选定录制
-                        </button>
                       )}
                     </td>
                   </tr>
@@ -705,7 +449,6 @@ export function LivePage() {
           </table>
         </div>
       </section>
-
     </div>
   );
 }

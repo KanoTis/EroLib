@@ -17,7 +17,12 @@ export const providerAccounts = sqliteTable(
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
     provider: text("provider").notNull(),
+    /** @deprecated Kept for DB compat; business logic uses favoriteSyncEnabled. */
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** Participate in VOD favorites sync (scheduled + manual). */
+    favoriteSyncEnabled: integer("favorite_sync_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
     authMode: text("auth_mode").notNull(),
     username: text("username"),
     encryptedPayload: text("encrypted_payload").notNull(),
@@ -126,7 +131,12 @@ export const liveSubscriptions = sqliteTable(
     authorId: text("author_id").notNull(),
     username: text("username"),
     displayName: text("display_name"),
+    /** Live auto-record (otobanana poller only). */
     enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    /** VOD author works discovery (listAuthorWorks in full sync). */
+    syncWorks: integer("sync_works", { mode: "boolean" })
+      .notNull()
+      .default(false),
     lastOnairAt: text("last_onair_at"),
     lastRoomId: text("last_room_id"),
     lastCheckAt: text("last_check_at"),

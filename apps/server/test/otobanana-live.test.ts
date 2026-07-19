@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  mapUserSearchHits,
   normalizeUsernameInput,
   parseOnairPayload,
   pickExactUsername,
@@ -44,6 +45,23 @@ describe("otobanana live helpers", () => {
       ),
       null,
     );
+  });
+
+  it("maps partial user search hits", () => {
+    const hits = mapUserSearchHits({
+      data: [
+        { id: "u1", username: "alice", name: "Alice" },
+        { id: "u2", username: "alicia", name: "Alicia" },
+        { id: "  ", username: "skip" },
+      ],
+    });
+    assert.equal(hits.length, 2);
+    assert.deepEqual(hits[0], {
+      authorId: "u1",
+      username: "alice",
+      displayName: "Alice",
+    });
+    assert.equal(hits[1]?.authorId, "u2");
   });
 
   it("parses onair room payload", () => {

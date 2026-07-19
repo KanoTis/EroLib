@@ -1,10 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import type { ProviderAuth, Session } from "@erolib/shared";
 import type { AppConfig } from "../config.js";
-import {
-  decryptJson,
-  type EncryptedBlob,
-} from "../crypto/credentials.js";
 import type { AppDatabase } from "../db/client.js";
 import {
   liveRecordJobs,
@@ -12,9 +7,8 @@ import {
   providerAccounts,
   type LiveRecordJobRow,
   type LiveSubscriptionRow,
-  type ProviderAccountRow,
 } from "../db/schema.js";
-import { getProvider } from "../providers/index.js";
+import { ensureProviderSession } from "../providers/ensure-session.js";
 import {
   getUserOnair,
   type OnairRoom,
@@ -43,32 +37,8 @@ export interface LivePoller {
   stopRecording(jobId: number): Promise<void>;
 }
 
-interface CredentialPayload {
-  mode: "password" | "cookie";
-  username?: string;
-  password?: string;
-  cookieHeader?: string;
-}
-
 function nowSql(): string {
   return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
-}
-
-function parseEncryptedPayload(
-  secret: string,
-  encoded: string,
-): CredentialPayload {
-  const raw: unknown = JSON.parse(encoded);
-  return decryptJson(secret, raw as EncryptedBlob) as CredentialPayload;
-}
-
-function parseSession(blob: string | null): Session | null {
-  if (!blob) return null;
-  try {
-    return JSON.parse(blob) as Session;
-  } catch {
-    return null;
-  }
 }
 
 async function mapPool<T>(
@@ -106,48 +76,14 @@ export function createLivePoller(
       .from(providerAccounts)
       .where(eq(providerAccounts.provider, PROVIDER))
       .limit(1);
-    if (!account || !account.enabled) return null;
+    // Account `enabled` no longer gates live credentials; only need a configured account.
+    if (!account) return null;
     try {
-      const session = await ensureSession(account);
+      const session = await ensureProviderSession(db, config, account);
       return sessionData(session).accessToken ?? null;
     } catch {
       return null;
     }
-  }
-
-  async function ensureSession(account: ProviderAccountRow): Promise<Session> {
-    const provider = getProvider(PROVIDER);
-    const creds = parseEncryptedPayload(
-      config.credentialsSecret,
-      account.encryptedPayload,
-    );
-    const existing = parseSession(account.sessionBlob);
-    if (existing) {
-      try {
-        if (await provider.isSessionValid(existing)) {
-          return existing;
-        }
-      } catch {
-        // re-login
-      }
-    }
-    const auth: ProviderAuth = {
-      mode: creds.mode,
-      username: creds.username,
-      password: creds.password,
-      cookieHeader: creds.cookieHeader,
-    };
-    const session = await provider.login(auth);
-    await db
-      .update(providerAccounts)
-      .set({
-        sessionBlob: JSON.stringify(session),
-        status: "ok",
-        statusMessage: null,
-        updatedAt: nowSql(),
-      })
-      .where(eq(providerAccounts.id, account.id));
-    return session;
   }
 
   async function ensureJob(room: OnairRoom): Promise<LiveRecordJobRow | null> {

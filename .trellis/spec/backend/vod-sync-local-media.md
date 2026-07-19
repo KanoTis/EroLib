@@ -6,7 +6,8 @@ Executable contracts for full-sync re-download when local VOD audio is missing o
 
 - Trigger: user deletes or empties files under `MEDIA_DIR`, then runs full sync (`立即同步全部` / scheduled `runSync`).
 - Layers: `JobRunner.syncOne` → `enqueueDownload` → `download_jobs` → `processJob`.
-- Provider scope: all VOD providers with `works` rows (not Live `live_media`).
+- Provider scope: VOD providers with `works` rows **and** `provider_accounts.favorite_sync_enabled = true` (not Live `live_media`).
+- Account gate: use `favoriteSyncEnabled`, **not** legacy `provider_accounts.enabled` (see provider-account-credentials favorite-sync scenario).
 
 ## 2. Signatures
 
@@ -125,3 +126,70 @@ if (await enqueueDownload(existing[0])) enqueued += 1;
 - **Shared gate in `enqueueDownload`**: one disk check for sync and future callers; avoid outer status-only skip in `syncOne`.
 - **Prefer DB `mediaRelDir` + `audioExt`**: same values written on successful commit; no re-derive from authorId required for availability.
 - **0-byte counts as missing**: empty leftovers after interrupted delete/write should re-download.
+
+## Scenario: Author subscription works in full sync
+
+### 1. Scope / Trigger
+
+- Trigger: full/scheduled `runSync` / `syncOne` after favorites block (or instead of favorites when `favorite_sync_enabled=false`).
+- Layers: `live_subscriptions.sync_works` → `Provider.listAuthorWorks` → `works` upsert → `enqueueDownload`.
+
+### 2. Signatures
+
+```ts
+// apps/server/src/providers/types.ts
+listAuthorWorks(session: Session, authorId: string): AsyncIterable<RemoteWorkRef>;
+
+// live_subscriptions.sync_works INTEGER NOT NULL DEFAULT 0  (migrate old rows = 0)
+// LiveSubscriptionPublic.syncWorks: boolean
+```
+
+### 3. Contracts
+
+| Source | `remoteInFavorites` | Favorite reconcile |
+|--------|---------------------|--------------------|
+| `listFavorites` | `true` | yes |
+| `listAuthorWorks` | **always false** (never set true on this path) | no (reconcile only selects `remoteInFavorites=true`) |
+
+| Gate | Rule |
+|------|------|
+| Favorites block | requires account + `favorite_sync_enabled` |
+| Author works block | requires account; **independent** of `favorite_sync_enabled` |
+| Per-author failure | set `lastError`, continue other authors / finish run |
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+|-----------|--------|
+| `sync_works=true`, account ok | discover + enqueue via `enqueueDownload` |
+| `sync_works=false` or removed | no new author discoveries; existing media kept |
+| Author list throws | author `lastError`; run continues |
+| Work already from favorites | upsert keeps favorites flag true if already true; author path must not force true |
+
+### 5. Good / Base / Bad
+
+- **Good**: enable 同步作品 → full sync downloads author works not in favorites.
+- **Base**: old subscription after migrate has `sync_works=0` → no surprise downloads.
+- **Bad**: author path sets `remoteInFavorites=true` → reconcile marks them not-favorite when absent from likes.
+
+### 6. Tests Required
+
+- Unit: provider list parsers (koekoe list cards, etc.).
+- Manual: one `syncWorks` author per configured provider → sync → works appear / enqueue.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+// author path
+remoteInFavorites: true, // pollutes favorites reconcile
+```
+
+#### Correct
+
+```ts
+// author path
+remoteInFavorites: false,
+// favorites reconcile: where remoteInFavorites === true only
+```
