@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
 
 export interface AppConfig {
@@ -62,10 +63,6 @@ export function loadConfig(): AppConfig {
     throw new Error("CREDENTIALS_SECRET must be at least 16 characters");
   }
 
-  const webDist =
-    envOptionalString("WEB_DIST_DIR") ??
-    path.resolve(cwd, "../web/dist");
-
   return {
     port: envInt("PORT", 8080),
     host: envString("HOST", "0.0.0.0"),
@@ -77,10 +74,33 @@ export function loadConfig(): AppConfig {
     credentialsSecret: secret,
     syncIntervalHours: envInt("SYNC_INTERVAL_HOURS", 4),
     maxDownloadConcurrency: envInt("MAX_DOWNLOAD_CONCURRENCY", 2),
-    webDistDir: webDist,
+    webDistDir: resolveWebDistDir(cwd),
     nodeEnv: envString("NODE_ENV", "development"),
     liveRecorderBin: envOptionalString("LIVE_RECORDER_BIN"),
   };
+}
+
+/**
+ * Prefer WEB_DIST_DIR when it contains index.html; otherwise try known
+ * image layouts (new slim path + legacy monorepo path) and local dev default.
+ */
+function resolveWebDistDir(cwd: string): string {
+  const fromEnv = envOptionalString("WEB_DIST_DIR");
+  const candidates = [
+    fromEnv,
+    "/app/web/dist",
+    "/app/apps/web/dist",
+    path.resolve(cwd, "../web/dist"),
+    path.resolve(cwd, "web/dist"),
+  ].filter((x): x is string => Boolean(x));
+
+  for (const dir of candidates) {
+    if (existsSync(path.join(dir, "index.html"))) {
+      return dir;
+    }
+  }
+
+  return fromEnv ?? path.resolve(cwd, "../web/dist");
 }
 
 export function authEnabled(config: AppConfig): boolean {
