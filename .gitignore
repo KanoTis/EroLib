@@ -1,5 +1,8 @@
 node_modules
 dist
+*.exe
+apps/live-record/live-record
+apps/live-record/live-record.exe
 /data/
 /media/
 /cache/

@@ -59,7 +59,9 @@ curl -sS http://localhost:8080/api/health
 | `MAX_DOWNLOAD_CONCURRENCY` | `2` | VOD 下载并发 |
 | `WEB_DIST_DIR` | 镜像内 SPA 路径 | 静态前端目录 |
 | `FFMPEG_PATH` | （可选） | 本机 ffmpeg 路径；Docker 已内置，一般无需设置 |
-| `PLAYWRIGHT_BROWSERS_PATH` | 镜像内 `/ms-playwright` | 浏览器二进制目录；镜像已配置 |
+| `LIVE_RECORDER` | `auto` | `auto` / `native` / `browser` — 直播录制后端 |
+| `LIVE_RECORDER_BIN` | （可选） | Go `live-record` 路径；Docker 为 `/usr/local/bin/live-record` |
+| `PLAYWRIGHT_BROWSERS_PATH` | 镜像内 `/ms-playwright` | 浏览器回退用；镜像已配置 |
 | `NODE_ENV` | 生产镜像为 `production` | 运行环境 |
 
 完整加载逻辑见 `apps/server/src/config.ts`（`FFMPEG_PATH` 由 `providers/ffmpeg.ts` 读取）。
@@ -81,12 +83,13 @@ curl -sS http://localhost:8080/api/health
 | Koe-koe | 收藏页解析与音频下载 |
 | Erovoice | 站点 HLS（约 75kbps AAC）→ 服务端解密转码为 `audio.mp3`，需要 **ffmpeg** |
 
-**直播录制**：镜像内已安装 Playwright Chromium headless shell。本地开发需自行安装浏览器：
+**直播录制（默认无浏览器）**：优先使用 Go/pion 二进制 `apps/live-record`（`LIVE_RECORDER=auto`）。Docker 镜像内置 `/usr/local/bin/live-record`。本地：
 
 ```bash
+cd apps/live-record && go build -o live-record.exe .
+# 可选强制浏览器回退：LIVE_RECORDER=browser
+# 可选 Playwright 回退（未装 native 时）：
 pnpm --filter @erolib/server exec playwright install chromium
-# 或（在 apps/server 下）
-pnpm exec playwright install chromium
 ```
 
 ## 本地开发
@@ -96,7 +99,7 @@ pnpm exec playwright install chromium
 - Node.js **≥ 20**（Docker 镜像为 Node 22）
 - pnpm **10**（见根目录 `packageManager`）
 - 本机 **ffmpeg**（Erovoice 下载 / 转码；需在 `PATH` 或设置 `FFMPEG_PATH`）
-- 直播录制：本机 Playwright Chromium（见上）
+- 直播录制：**Go ≥ 1.22** 构建 `apps/live-record`（推荐）；或 Playwright Chromium 回退
 
 ```bash
 pnpm install
@@ -121,9 +124,10 @@ pnpm start        # 生产模式启动 server（需先 build）
 ## 项目结构
 
 ```
-apps/server       Hono API · 任务调度 · Providers · 直播录制 · SQLite
-apps/web          React SPA（媒体库 / Providers / 同步 / 任务 / 直播 / 设置）
-packages/shared   共享类型与契约
+apps/server         Hono API · 任务调度 · Providers · 直播录制 · SQLite
+apps/live-record    Go/pion 无浏览器直播录制（Otobanana Realtime → Opus/Ogg）
+apps/web            React SPA（媒体库 / Providers / 同步 / 任务 / 直播 / 设置）
+packages/shared     共享类型与契约
 ```
 
 ## 安全提示
@@ -140,12 +144,14 @@ packages/shared   共享类型与契约
 | 拉镜像 401 / denied | GHCR 私有包未登录 | `docker login ghcr.io`，token 含 `read:packages` |
 | `/api/health` 不通 | 容器未起或端口占用 | `docker compose ps` / `logs`；检查 `8080` 映射 |
 | Erovoice 下载失败且提示 ffmpeg | 本机无 ffmpeg | 安装 ffmpeg 或设置 `FFMPEG_PATH`；Docker 镜像已内置 |
-| 直播录制 `Executable doesn't exist` | 未装 Playwright 浏览器 | Docker 用最新镜像；本地执行 `playwright install chromium` |
+| 直播录制 `Executable doesn't exist` | 仅浏览器回退且未装 Chromium | 构建 `apps/live-record`，或 `playwright install chromium` / `LIVE_RECORDER=native` |
+| 直播录制 `native recorder` 找不到 | 未构建 pion 二进制 | `cd apps/live-record && go build`，或设 `LIVE_RECORDER_BIN` |
 | 改了 `SYNC_INTERVAL_HOURS` 未生效 | 间隔以**设置页/库内配置**为准 | 在 Web **设置**中保存；compose 环境变量多为首次/默认相关 |
 | 登录后立刻掉线 / Cookie 异常 | 反代未转发 Cookie 或 HTTPS 配置 | 同源访问或正确配置反代；当前 session cookie 为 httpOnly |
 
 ## 技术栈（概要）
 
-- 后端：Hono、Drizzle、libSQL/SQLite、Zod、Playwright、ffmpeg  
+- 后端：Hono、Drizzle、libSQL/SQLite、Zod、Playwright（回退）、ffmpeg  
+- 直播：Go + pion WebRTC（默认）  
 - 前端：React 19、React Router 7、Vite 6  
-- 部署：Docker multi-stage（Node 22 + ffmpeg + Chromium shell）、GHCR `ghcr.io/kanotis/erolib`
+- 部署：Docker multi-stage（Node 22 + live-record + ffmpeg + Chromium 回退）、GHCR `ghcr.io/kanotis/erolib`

@@ -4,6 +4,13 @@ FROM node:22-bookworm-slim AS base
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@10.30.1 --activate
 
+FROM golang:1.26-bookworm AS live-record-build
+WORKDIR /src
+COPY apps/live-record/go.mod apps/live-record/go.sum ./
+RUN go mod download
+COPY apps/live-record/ ./
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/live-record .
+
 FROM base AS build
 # .dockerignore keeps context small and excludes host node_modules/dist
 COPY . .
@@ -24,6 +31,8 @@ ENV NODE_ENV=production \
     MEDIA_DIR=/media \
     CACHE_DIR=/cache \
     WEB_DIST_DIR=/app/apps/web/dist \
+    LIVE_RECORDER=auto \
+    LIVE_RECORDER_BIN=/usr/local/bin/live-record \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 LABEL org.opencontainers.image.source=https://github.com/KanoTis/EroLib \
       org.opencontainers.image.description="Self-hosted audio media backup server" \
@@ -42,7 +51,9 @@ COPY --from=build /app/apps/web/dist apps/web/dist
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/apps/server/node_modules apps/server/node_modules
 COPY --from=build /app/packages/shared/node_modules packages/shared/node_modules
+COPY --from=live-record-build /out/live-record /usr/local/bin/live-record
 
+# Playwright remains as fallback when LIVE_RECORDER=browser
 RUN mkdir -p /data /media /cache /ms-playwright \
   && apps/server/node_modules/.bin/playwright install --with-deps --only-shell chromium \
   && rm -rf /var/lib/apt/lists/*
