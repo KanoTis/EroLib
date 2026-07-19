@@ -19,7 +19,7 @@ services:
       CACHE_DIR: /cache
       SYNC_INTERVAL_HOURS: "4"
       MAX_DOWNLOAD_CONCURRENCY: "2"
-      WEB_DIST_DIR: /app/apps/web/dist
+      WEB_DIST_DIR: /app/web/dist
       # Go/pion live-record (built into image)
       LIVE_RECORDER_BIN: /usr/local/bin/live-record
     volumes:

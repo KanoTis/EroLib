@@ -20,7 +20,17 @@ RUN find . -name '*.tsbuildinfo' -delete \
   && pnpm --filter @erolib/shared build \
   && test -f packages/shared/dist/index.d.ts \
   && pnpm --filter @erolib/web build \
-  && pnpm --filter @erolib/server build
+  && pnpm --filter @erolib/server build \
+  # Portable prod tree for @erolib/server (no monorepo devDeps / web toolchain).
+  # --legacy: pnpm v10 deploy without inject-workspace-packages (local workspace stays link-based).
+  # Use a path under WORKDIR so deploy resolves cleanly in the Linux build container.
+  && pnpm --filter @erolib/server deploy --prod --legacy /app/deploy-out \
+  && mkdir -p /out \
+  && mv /app/deploy-out /out/server \
+  && find /out/server -type f \( -name '*.map' -o -name '*.d.ts' \) -delete \
+  && (rm -rf /out/server/src /out/server/test /out/server/scripts \
+    /out/server/data /out/server/media /out/server/cache \
+    /out/server/.tmp-research /out/server/tsconfig.json 2>/dev/null || true)
 
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
@@ -30,27 +40,21 @@ ENV NODE_ENV=production \
     DATA_DIR=/data \
     MEDIA_DIR=/media \
     CACHE_DIR=/cache \
-    WEB_DIST_DIR=/app/apps/web/dist \
+    WEB_DIST_DIR=/app/web/dist \
     LIVE_RECORDER_BIN=/usr/local/bin/live-record
 LABEL org.opencontainers.image.source=https://github.com/KanoTis/EroLib \
       org.opencontainers.image.description="Self-hosted audio media backup server" \
       org.opencontainers.image.licenses=MIT
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates ffmpeg \
-  && rm -rf /var/lib/apt/lists/* \
-  && corepack enable && corepack prepare pnpm@10.30.1 --activate
+  && rm -rf /var/lib/apt/lists/*
 
-COPY package.json pnpm-workspace.yaml ./
-COPY packages/shared/package.json packages/shared/
-COPY apps/server/package.json apps/server/
-COPY --from=build /app/packages/shared/dist packages/shared/dist
-COPY --from=build /app/apps/server/dist apps/server/dist
-COPY --from=build /app/apps/web/dist apps/web/dist
-COPY --from=build /app/node_modules node_modules
-COPY --from=build /app/apps/server/node_modules apps/server/node_modules
-COPY --from=build /app/packages/shared/node_modules packages/shared/node_modules
+# Prod-only server tree from pnpm deploy (package.json + dist + node_modules)
+COPY --from=build /out/server/ /app/
+# SPA assets (not part of server package)
+COPY --from=build /app/apps/web/dist /app/web/dist
 COPY --from=live-record-build /out/live-record /usr/local/bin/live-record
 
 RUN mkdir -p /data /media /cache
 EXPOSE 8080
-CMD ["node", "apps/server/dist/index.js"]
+CMD ["node", "dist/index.js"]

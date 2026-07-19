@@ -57,7 +57,7 @@ curl -sS http://localhost:8080/api/health
 | `DATA_DIR` / `MEDIA_DIR` / `CACHE_DIR` | `/data` 等 | 数据与媒体路径 |
 | `SYNC_INTERVAL_HOURS` | `4` | 自动同步间隔（小时） |
 | `MAX_DOWNLOAD_CONCURRENCY` | `2` | VOD 下载并发 |
-| `WEB_DIST_DIR` | 镜像内 SPA 路径 | 静态前端目录 |
+| `WEB_DIST_DIR` | 镜像内 `/app/web/dist` | 静态前端目录 |
 | `FFMPEG_PATH` | （可选） | 本机 ffmpeg 路径；Docker 已内置，一般无需设置 |
 | `LIVE_RECORDER_BIN` | （可选） | Go `live-record` 路径；Docker 默认 `/usr/local/bin/live-record` |
 | `NODE_ENV` | 生产镜像为 `production` | 运行环境 |
@@ -149,4 +149,4 @@ packages/shared     共享类型与契约
 - 后端：Hono、Drizzle、libSQL/SQLite、Zod、ffmpeg  
 - 直播：Go + pion WebRTC（`apps/live-record`）  
 - 前端：React 19、React Router 7、Vite 6  
-- 部署：Docker multi-stage（Node 22 + live-record + ffmpeg）、GHCR `ghcr.io/kanotis/erolib`
+- 部署：Docker multi-stage（Node 22 + `pnpm deploy --prod` 生产依赖 + live-record + ffmpeg）、GHCR `ghcr.io/kanotis/erolib`
