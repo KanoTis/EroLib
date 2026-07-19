@@ -208,3 +208,36 @@ Implemented Otobanana live discovery/polling/Playwright WAV recording, followee 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: 同步页作者订阅与 Live 瘦身
+
+**Date**: 2026-07-19
+**Task**: 同步页作者订阅与 Live 瘦身
+**Branch**: `master`
+
+### Summary
+
+完成 Sync 订阅作者（同步作品/自动录制双开关）、三渠道 listAuthorWorks 并入全量同步、favoriteSync 拆分、Live 瘦身、关注导入与手动添加（erovoice 仅 slug）；提交 ccbb5d0 并归档任务。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ccbb5d0` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
