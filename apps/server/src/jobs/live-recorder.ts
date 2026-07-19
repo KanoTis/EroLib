@@ -1,5 +1,6 @@
+import { spawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, type WriteStream } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { and, eq } from "drizzle-orm";
@@ -28,6 +29,61 @@ const MIN_BYTES_OK = 2048;
 const SCRIPT_PATH = fileURLToPath(
   new URL("./live-browser-script.js", import.meta.url),
 );
+
+const NATIVE_CANDIDATES = [
+  // Docker / production install path
+  "/usr/local/bin/live-record",
+  // monorepo: apps/live-record next to apps/server
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../../live-record/live-record",
+  ),
+  path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "../../../live-record/live-record.exe",
+  ),
+  // when running from apps/server cwd
+  path.resolve(process.cwd(), "../live-record/live-record"),
+  path.resolve(process.cwd(), "../live-record/live-record.exe"),
+  path.resolve(process.cwd(), "apps/live-record/live-record"),
+  path.resolve(process.cwd(), "apps/live-record/live-record.exe"),
+];
+
+async function canExecuteFile(bin: string): Promise<boolean> {
+  try {
+    await access(bin);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveNativeBin(
+  config: AppConfig,
+): Promise<string | null> {
+  if (config.liveRecorder === "browser") return null;
+  const preferred = config.liveRecorderBin?.trim();
+  if (preferred) {
+    if (await canExecuteFile(preferred)) return preferred;
+    if (config.liveRecorder === "native") {
+      throw new Error(`LIVE_RECORDER_BIN not found: ${preferred}`);
+    }
+  }
+  for (const c of NATIVE_CANDIDATES) {
+    if (await canExecuteFile(c)) return c;
+  }
+  // bare name on PATH
+  if (await canExecuteFile("live-record")) return "live-record";
+  if (process.platform === "win32" && (await canExecuteFile("live-record.exe"))) {
+    return "live-record.exe";
+  }
+  if (config.liveRecorder === "native") {
+    throw new Error(
+      "LIVE_RECORDER=native but live-record binary not found; build apps/live-record or set LIVE_RECORDER_BIN",
+    );
+  }
+  return null;
+}
 
 function nowSql(): string {
   return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
@@ -155,6 +211,194 @@ export function createLiveRecorder(
       .where(eq(liveRecordJobs.id, jobId));
   }
 
+  async function upsertLiveMediaForJob(
+    job: LiveRecordJobRow,
+    mediaPath: string,
+    audioExt: string,
+    fileBytes: number,
+    now: string,
+  ): Promise<void> {
+    const [sub] = await db
+      .select({
+        username: liveSubscriptions.username,
+        displayName: liveSubscriptions.displayName,
+      })
+      .from(liveSubscriptions)
+      .where(
+        and(
+          eq(liveSubscriptions.provider, job.provider),
+          eq(liveSubscriptions.authorId, job.authorId),
+        ),
+      )
+      .limit(1);
+    const authorName =
+      sub?.displayName?.trim() || sub?.username?.trim() || null;
+    const [existing] = await db
+      .select({ id: liveMedia.id })
+      .from(liveMedia)
+      .where(
+        and(
+          eq(liveMedia.provider, job.provider),
+          eq(liveMedia.roomId, job.roomId),
+        ),
+      )
+      .limit(1);
+    const values = {
+      authorId: job.authorId,
+      authorName,
+      title: job.title,
+      jobId: job.id,
+      audioExt,
+      mediaRelPath: mediaPath,
+      bytes: fileBytes > 0 ? fileBytes : null,
+      recordedAt: now,
+      updatedAt: now,
+    };
+    if (existing) {
+      await db
+        .update(liveMedia)
+        .set(values)
+        .where(eq(liveMedia.id, existing.id));
+    } else {
+      await db.insert(liveMedia).values({
+        provider: job.provider,
+        roomId: job.roomId,
+        ...values,
+        createdAt: now,
+      });
+    }
+  }
+
+  async function runNativeSession(
+    job: LiveRecordJobRow,
+    accessToken: string,
+    signal: AbortSignal,
+    bin: string,
+  ): Promise<void> {
+    const postPtrId = job.postPtrId?.trim();
+    if (!postPtrId) {
+      await setJobState(job.id, {
+        state: "blocked",
+        error: "Missing post_ptr_id for realtime join",
+      });
+      return;
+    }
+
+    const outDir = liveMediaDir(
+      config.mediaDir,
+      job.provider,
+      job.authorId,
+      job.roomId,
+    );
+    await mkdir(outDir, { recursive: true });
+    const outFile = path.join(outDir, "audio.ogg");
+    const relPath = path
+      .relative(config.mediaDir, outFile)
+      .split(path.sep)
+      .join("/");
+
+    await setJobState(job.id, { state: "recording", error: null });
+    console.log(
+      `[live-recorder job=${job.id}] native bin=${bin} post_ptr_id=${postPtrId}`,
+    );
+
+    const maxSec = Math.max(1, Math.floor(MAX_MS / 1000));
+    const args = [
+      "-token",
+      accessToken,
+      "-post-ptr-id",
+      postPtrId,
+      "-out",
+      outFile,
+      "-max-sec",
+      String(maxSec),
+    ];
+
+    let child: ChildProcess | null = null;
+    let stderr = "";
+    let exitCode: number | null = null;
+
+    try {
+      const proc = spawn(bin, args, {
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      child = proc;
+      proc.stdout?.on("data", (chunk: Buffer | string) => {
+        const line = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        for (const part of line.split(/\r?\n/)) {
+          if (part.trim()) console.log(`[live-record job=${job.id}] ${part}`);
+        }
+      });
+      proc.stderr?.on("data", (chunk: Buffer | string) => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        stderr += text;
+        if (stderr.length > 8000) stderr = stderr.slice(-8000);
+        for (const part of text.split(/\r?\n/)) {
+          if (part.trim()) console.log(`[live-record job=${job.id}] ${part}`);
+        }
+      });
+
+      const onAbort = () => {
+        if (proc.killed) return;
+        proc.kill("SIGTERM");
+        setTimeout(() => {
+          if (!proc.killed) proc.kill("SIGKILL");
+        }, 3000);
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+
+      exitCode = await new Promise<number>((resolve, reject) => {
+        proc.once("error", reject);
+        proc.once("exit", (code) => resolve(code ?? 1));
+      });
+      signal.removeEventListener("abort", onAbort);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await setJobState(job.id, {
+        state: "failed",
+        error: `native recorder spawn failed: ${message}`,
+        endedAt: nowSql(),
+      });
+      return;
+    }
+
+    const now = nowSql();
+    let fileBytes = 0;
+    try {
+      const st = await stat(outFile);
+      fileBytes = st.size;
+    } catch {
+      fileBytes = 0;
+    }
+
+    if (fileBytes >= MIN_BYTES_OK) {
+      await setJobState(job.id, {
+        state: "completed",
+        mediaRelPath: relPath,
+        error: null,
+        endedAt: now,
+      });
+      await upsertLiveMediaForJob(job, relPath, "ogg", fileBytes, now);
+      console.log(
+        `[live-recorder job=${job.id}] native completed bytes=${fileBytes} exit=${exitCode}`,
+      );
+      return;
+    }
+
+    const detail =
+      stderr.trim().split(/\r?\n/).filter(Boolean).slice(-3).join(" | ") ||
+      `exit ${exitCode ?? "unknown"}`;
+    await setJobState(job.id, {
+      state: "failed",
+      error: signal.aborted
+        ? "Recording aborted"
+        : `native recorder failed: ${detail}`,
+      endedAt: now,
+      mediaRelPath: null,
+    });
+  }
+
   async function runSession(
     job: LiveRecordJobRow,
     accessToken: string,
@@ -173,6 +417,23 @@ export function createLiveRecorder(
         state: "blocked",
         error: `Unsupported stream_service: ${job.streamService ?? "null"}`,
       });
+      return;
+    }
+
+    let nativeBin: string | null = null;
+    try {
+      nativeBin = await resolveNativeBin(config);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await setJobState(job.id, {
+        state: "failed",
+        error: message,
+        endedAt: nowSql(),
+      });
+      return;
+    }
+    if (nativeBin) {
+      await runNativeSession(job, accessToken, signal, nativeBin);
       return;
     }
 
@@ -261,60 +522,6 @@ export function createLiveRecorder(
       const now = nowSql();
       const fileBytes = bytes > 0 ? bytes + 44 : 0;
 
-      async function upsertLiveMedia(mediaPath: string): Promise<void> {
-        const [sub] = await db
-          .select({
-            username: liveSubscriptions.username,
-            displayName: liveSubscriptions.displayName,
-          })
-          .from(liveSubscriptions)
-          .where(
-            and(
-              eq(liveSubscriptions.provider, job.provider),
-              eq(liveSubscriptions.authorId, job.authorId),
-            ),
-          )
-          .limit(1);
-        const authorName =
-          sub?.displayName?.trim() ||
-          sub?.username?.trim() ||
-          null;
-        const [existing] = await db
-          .select({ id: liveMedia.id })
-          .from(liveMedia)
-          .where(
-            and(
-              eq(liveMedia.provider, job.provider),
-              eq(liveMedia.roomId, job.roomId),
-            ),
-          )
-          .limit(1);
-        const values = {
-          authorId: job.authorId,
-          authorName,
-          title: job.title,
-          jobId: job.id,
-          audioExt: "wav",
-          mediaRelPath: mediaPath,
-          bytes: fileBytes > 0 ? fileBytes : null,
-          recordedAt: now,
-          updatedAt: now,
-        };
-        if (existing) {
-          await db
-            .update(liveMedia)
-            .set(values)
-            .where(eq(liveMedia.id, existing.id));
-        } else {
-          await db.insert(liveMedia).values({
-            provider: job.provider,
-            roomId: job.roomId,
-            ...values,
-            createdAt: now,
-          });
-        }
-      }
-
       if (
         state === "completed" ||
         (state === "ended" && bytes >= MIN_BYTES_OK)
@@ -325,7 +532,7 @@ export function createLiveRecorder(
           error: null,
           endedAt: now,
         });
-        await upsertLiveMedia(relPath);
+        await upsertLiveMediaForJob(job, relPath, "wav", fileBytes, now);
         return;
       }
       if (state === "ended") {
@@ -335,7 +542,9 @@ export function createLiveRecorder(
           endedAt: now,
           mediaRelPath: bytes >= MIN_BYTES_OK ? relPath : null,
         });
-        if (bytes >= MIN_BYTES_OK) await upsertLiveMedia(relPath);
+        if (bytes >= MIN_BYTES_OK) {
+          await upsertLiveMediaForJob(job, relPath, "wav", fileBytes, now);
+        }
         return;
       }
       await setJobState(job.id, {
@@ -344,7 +553,9 @@ export function createLiveRecorder(
         endedAt: now,
         mediaRelPath: bytes >= MIN_BYTES_OK ? relPath : null,
       });
-      if (bytes >= MIN_BYTES_OK) await upsertLiveMedia(relPath);
+      if (bytes >= MIN_BYTES_OK) {
+        await upsertLiveMediaForJob(job, relPath, "wav", fileBytes, now);
+      }
     };
 
     const onAbort = () => {

@@ -1459,11 +1459,13 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     const contentType =
       row.audioExt === "wav"
         ? "audio/wav"
-        : row.audioExt === "mp3"
-          ? "audio/mpeg"
-          : row.audioExt === "m4a"
-            ? "audio/mp4"
-            : "application/octet-stream";
+        : row.audioExt === "ogg" || row.audioExt === "opus"
+          ? "audio/ogg"
+          : row.audioExt === "mp3"
+            ? "audio/mpeg"
+            : row.audioExt === "m4a"
+              ? "audio/mp4"
+              : "application/octet-stream";
 
     if (range) {
       const m = /bytes=(\d+)-(\d*)/.exec(range);
