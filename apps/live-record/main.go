@@ -31,6 +31,10 @@ const (
 	defaultWSBase  = "wss://api.v3.otobanana.com/ws"
 	defaultOrigin  = "https://otobanana.com"
 	defaultUA      = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
+	// Upstream Otobanana/CF sometimes returns empty 500 on add_track.
+	maxAddTrackAttempts = 3
+	maxJoinCycles       = 3 // initial join + re-join attempts
 )
 
 type iceServerJSON struct {
@@ -68,6 +72,16 @@ type wsMessage struct {
 	Tracks  []wsTrack `json:"tracks"`
 	Message string    `json:"message"`
 	Count   int       `json:"count"`
+}
+
+type httpStatusError struct {
+	op     string
+	status int
+	body   string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("%s HTTP %d: %s", e.op, e.status, e.body)
 }
 
 func main() {
@@ -235,7 +249,7 @@ type recordOpts struct {
 	MaxDur    time.Duration
 }
 
-func record(ctx context.Context, opts recordOpts) error {
+func joinRealtime(ctx context.Context, opts recordOpts) (joinResponse, error) {
 	joinToken := uuid.NewString()
 	joinRaw, status, err := httpJSON(ctx, http.MethodPost,
 		fmt.Sprintf("%s/api/livestreams/realtime/%s/join", opts.APIBase, url.PathEscape(opts.PostPtrID)),
@@ -243,19 +257,51 @@ func record(ctx context.Context, opts recordOpts) error {
 		map[string]string{"livestream_join_token": joinToken},
 	)
 	if err != nil {
-		return fmt.Errorf("join: %w", err)
+		return joinResponse{}, fmt.Errorf("join: %w", err)
 	}
 	if status < 200 || status >= 300 {
-		return fmt.Errorf("join HTTP %d: %s", status, truncate(string(joinRaw), 400))
+		return joinResponse{}, fmt.Errorf("join HTTP %d: %s", status, truncate(string(joinRaw), 400))
 	}
 	var join joinResponse
 	if err := json.Unmarshal(joinRaw, &join); err != nil {
-		return fmt.Errorf("join json: %w", err)
+		return joinResponse{}, fmt.Errorf("join json: %w", err)
 	}
 	if join.SessionID == "" {
-		return fmt.Errorf("join missing sessionId: %s", truncate(string(joinRaw), 400))
+		return joinResponse{}, fmt.Errorf("join missing sessionId: %s", truncate(string(joinRaw), 400))
 	}
 	log.Printf("joined session=%s iceServers=%d", join.SessionID, len(join.IceServers))
+	return join, nil
+}
+
+func isRetryableAddTrack(status int, err error) bool {
+	if err != nil {
+		return true
+	}
+	return status == 429 || status >= 500
+}
+
+func backoffWait(ctx context.Context, attempt int) error {
+	// attempt is 1-based after a failure: 1s, 2s, 4s
+	d := time.Duration(1<<uint(attempt-1)) * time.Second
+	if d > 8*time.Second {
+		d = 8 * time.Second
+	}
+	log.Printf("backoff %s before retry", d)
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+func record(ctx context.Context, opts recordOpts) error {
+	join, err := joinRealtime(ctx, opts)
+	if err != nil {
+		return err
+	}
 
 	mediaEngine := &webrtc.MediaEngine{}
 	if err := mediaEngine.RegisterDefaultCodecs(); err != nil {
@@ -270,20 +316,40 @@ func record(ctx context.Context, opts recordOpts) error {
 		webrtc.WithInterceptorRegistry(interceptorRegistry),
 	)
 
-	pc, err := api.NewPeerConnection(webrtc.Configuration{
-		ICEServers:   toICEServers(join.IceServers),
-		BundlePolicy: webrtc.BundlePolicyMaxBundle,
-	})
+	var (
+		pcMu sync.Mutex
+		pc   *webrtc.PeerConnection
+	)
+
+	newPC := func(ice []iceServerJSON) (*webrtc.PeerConnection, error) {
+		peer, err := api.NewPeerConnection(webrtc.Configuration{
+			ICEServers:   toICEServers(ice),
+			BundlePolicy: webrtc.BundlePolicyMaxBundle,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := peer.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{
+			Direction: webrtc.RTPTransceiverDirectionRecvonly,
+		}); err != nil {
+			_ = peer.Close()
+			return nil, fmt.Errorf("add transceiver: %w", err)
+		}
+		return peer, nil
+	}
+
+	pc, err = newPC(join.IceServers)
 	if err != nil {
 		return err
 	}
-	defer pc.Close()
-
-	if _, err := pc.AddTransceiverFromKind(webrtc.RTPCodecTypeAudio, webrtc.RTPTransceiverInit{
-		Direction: webrtc.RTPTransceiverDirectionRecvonly,
-	}); err != nil {
-		return fmt.Errorf("add transceiver: %w", err)
-	}
+	defer func() {
+		pcMu.Lock()
+		cur := pc
+		pcMu.Unlock()
+		if cur != nil {
+			_ = cur.Close()
+		}
+	}()
 
 	ogg, err := oggwriter.New(opts.OutPath, 48000, 2)
 	if err != nil {
@@ -299,46 +365,48 @@ func record(ctx context.Context, opts recordOpts) error {
 		writeMu      sync.Mutex
 	)
 
-	pc.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
-		codec := track.Codec()
-		log.Printf("ontrack kind=%s codec=%s ssrc=%d", track.Kind().String(), codec.MimeType, track.SSRC())
-		if track.Kind() != webrtc.RTPCodecTypeAudio {
-			return
-		}
-		trackOnce.Do(func() {
-			go func() {
-				defer close(trackDone)
-				for {
-					pkt, _, readErr := track.ReadRTP()
-					if readErr != nil {
-						if !errors.Is(readErr, io.EOF) && !strings.Contains(readErr.Error(), "closed") {
-							log.Printf("read rtp: %v", readErr)
+	attachPCHandlers := func(peer *webrtc.PeerConnection) {
+		peer.OnTrack(func(track *webrtc.TrackRemote, receiver *webrtc.RTPReceiver) {
+			codec := track.Codec()
+			log.Printf("ontrack kind=%s codec=%s ssrc=%d", track.Kind().String(), codec.MimeType, track.SSRC())
+			if track.Kind() != webrtc.RTPCodecTypeAudio {
+				return
+			}
+			trackOnce.Do(func() {
+				go func() {
+					defer close(trackDone)
+					for {
+						pkt, _, readErr := track.ReadRTP()
+						if readErr != nil {
+							if !errors.Is(readErr, io.EOF) && !strings.Contains(readErr.Error(), "closed") {
+								log.Printf("read rtp: %v", readErr)
+							}
+							return
 						}
-						return
+						writeMu.Lock()
+						werr := ogg.WriteRTP(pkt)
+						writeMu.Unlock()
+						if werr != nil {
+							log.Printf("write ogg: %v", werr)
+							return
+						}
+						pktCount++
+						bytesWritten += int64(len(pkt.Payload))
+						if pktCount == 1 || pktCount%250 == 0 {
+							log.Printf("rtp pkt=%d payload_bytes≈%d", pktCount, bytesWritten)
+						}
 					}
-					writeMu.Lock()
-					werr := ogg.WriteRTP(pkt)
-					writeMu.Unlock()
-					if werr != nil {
-						log.Printf("write ogg: %v", werr)
-						return
-					}
-					pktCount++
-					bytesWritten += int64(len(pkt.Payload))
-					if pktCount == 1 || pktCount%250 == 0 {
-						log.Printf("rtp pkt=%d payload_bytes≈%d", pktCount, bytesWritten)
-					}
-				}
-			}()
+				}()
+			})
 		})
-	})
-
-	pc.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
-		log.Printf("ice=%s", s.String())
-	})
-	pc.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
-		log.Printf("pc=%s", s.String())
-	})
+		peer.OnICEConnectionStateChange(func(s webrtc.ICEConnectionState) {
+			log.Printf("ice=%s", s.String())
+		})
+		peer.OnConnectionStateChange(func(s webrtc.PeerConnectionState) {
+			log.Printf("pc=%s", s.String())
+		})
+	}
+	attachPCHandlers(pc)
 
 	// Signaling WS + pull tracks.
 	done := make(chan error, 1)
@@ -358,43 +426,76 @@ func record(ctx context.Context, opts recordOpts) error {
 
 	var pullMu sync.Mutex
 	pulled := map[string]bool{}
+	var joinMu sync.Mutex
 
-	pullTracks := func(tracks []wsTrack) error {
-		pullMu.Lock()
-		defer pullMu.Unlock()
-		wanted := make([]map[string]string, 0, len(tracks))
-		for _, t := range tracks {
-			if t.SessionID == "" || t.TrackName == "" || t.SessionID == join.SessionID {
-				continue
-			}
-			key := t.SessionID + "|" + t.TrackName
-			if pulled[key] {
-				continue
-			}
-			pulled[key] = true
-			wanted = append(wanted, map[string]string{
-				"location":  "remote",
-				"trackName": t.TrackName,
-				"sessionId": t.SessionID,
-			})
+	replacePC := func(ice []iceServerJSON) error {
+		peer, err := newPC(ice)
+		if err != nil {
+			return err
 		}
-		if len(wanted) == 0 {
-			return nil
+		attachPCHandlers(peer)
+		pcMu.Lock()
+		old := pc
+		pc = peer
+		pcMu.Unlock()
+		if old != nil {
+			_ = old.Close()
 		}
-		log.Printf("add_track n=%d", len(wanted))
+		return nil
+	}
+
+	currentPC := func() *webrtc.PeerConnection {
+		pcMu.Lock()
+		defer pcMu.Unlock()
+		return pc
+	}
+
+	currentSessionID := func() string {
+		joinMu.Lock()
+		defer joinMu.Unlock()
+		return join.SessionID
+	}
+
+	rejoin := func() error {
+		next, err := joinRealtime(ctx, opts)
+		if err != nil {
+			return err
+		}
+		if err := replacePC(next.IceServers); err != nil {
+			return err
+		}
+		joinMu.Lock()
+		join = next
+		joinMu.Unlock()
+		log.Printf("re-joined after add_track failure session=%s", next.SessionID)
+		return nil
+	}
+
+	// One add_track HTTP + optional renegotiate against current session/PC.
+	addTrackOnce := func(wanted []map[string]string) error {
+		sessionID := currentSessionID()
+		peer := currentPC()
+		if peer == nil {
+			return errors.New("peer connection is nil")
+		}
+		log.Printf("add_track n=%d session=%s", len(wanted), sessionID)
 		raw, st, err := httpJSON(ctx, http.MethodPost,
 			fmt.Sprintf("%s/api/livestreams/realtime/%s/add_track", opts.APIBase, url.PathEscape(opts.PostPtrID)),
 			opts.Token,
 			map[string]any{
-				"session_id": join.SessionID,
+				"session_id": sessionID,
 				"payload":    map[string]any{"tracks": wanted},
 			},
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("add_track transport: %w", err)
 		}
 		if st < 200 || st >= 300 {
-			return fmt.Errorf("add_track HTTP %d: %s", st, truncate(string(raw), 400))
+			return &httpStatusError{
+				op:     "add_track",
+				status: st,
+				body:   truncate(string(raw), 400),
+			}
 		}
 		var add addTrackResponse
 		if err := json.Unmarshal(raw, &add); err != nil {
@@ -410,19 +511,19 @@ func record(ctx context.Context, opts recordOpts) error {
 			Type: webrtc.NewSDPType(add.SessionDescription.Type),
 			SDP:  add.SessionDescription.SDP,
 		}
-		if err := pc.SetRemoteDescription(offer); err != nil {
+		if err := peer.SetRemoteDescription(offer); err != nil {
 			return fmt.Errorf("set remote: %w", err)
 		}
 		if !add.RequiresImmediateRenegotiation {
 			log.Printf("add_track ok (no renegotiate flag)")
 			return nil
 		}
-		answer, err := pc.CreateAnswer(nil)
+		answer, err := peer.CreateAnswer(nil)
 		if err != nil {
 			return fmt.Errorf("create answer: %w", err)
 		}
-		gatherComplete := webrtc.GatheringCompletePromise(pc)
-		if err := pc.SetLocalDescription(answer); err != nil {
+		gatherComplete := webrtc.GatheringCompletePromise(peer)
+		if err := peer.SetLocalDescription(answer); err != nil {
 			return fmt.Errorf("set local: %w", err)
 		}
 		select {
@@ -432,7 +533,7 @@ func record(ctx context.Context, opts recordOpts) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		}
-		local := pc.LocalDescription()
+		local := peer.LocalDescription()
 		if local == nil {
 			return errors.New("nil local description")
 		}
@@ -440,7 +541,7 @@ func record(ctx context.Context, opts recordOpts) error {
 			fmt.Sprintf("%s/api/livestreams/realtime/%s/renegotiate", opts.APIBase, url.PathEscape(opts.PostPtrID)),
 			opts.Token,
 			map[string]any{
-				"session_id": join.SessionID,
+				"session_id": sessionID,
 				"payload": map[string]any{
 					"sessionDescription": map[string]string{
 						"type": "answer",
@@ -450,12 +551,92 @@ func record(ctx context.Context, opts recordOpts) error {
 			},
 		)
 		if err != nil {
-			return err
+			return fmt.Errorf("renegotiate transport: %w", err)
 		}
 		if renSt < 200 || renSt >= 300 {
-			return fmt.Errorf("renegotiate HTTP %d: %s", renSt, truncate(string(renRaw), 400))
+			return &httpStatusError{
+				op:     "renegotiate",
+				status: renSt,
+				body:   truncate(string(renRaw), 400),
+			}
 		}
 		log.Printf("renegotiate ok")
+		return nil
+	}
+
+	// 5xx/transport: up to maxAddTrackAttempts with backoff; then re-join and try again.
+	// Total join cycles (including the current session) capped at maxJoinCycles.
+	pullTracksWithRetry := func(wanted []map[string]string) error {
+		var lastErr error
+		for cycle := 1; cycle <= maxJoinCycles; cycle++ {
+			if cycle > 1 {
+				log.Printf("add_track cycle=%d/%d re-join", cycle, maxJoinCycles)
+				if err := rejoin(); err != nil {
+					return fmt.Errorf("re-join: %w", err)
+				}
+			}
+			for attempt := 1; attempt <= maxAddTrackAttempts; attempt++ {
+				err := addTrackOnce(wanted)
+				if err == nil {
+					return nil
+				}
+				lastErr = err
+				retryable := false
+				var he *httpStatusError
+				if errors.As(err, &he) {
+					retryable = isRetryableAddTrack(he.status, nil)
+				} else if strings.Contains(err.Error(), "transport:") {
+					retryable = true
+				}
+				log.Printf("add_track cycle=%d attempt=%d/%d failed: %v", cycle, attempt, maxAddTrackAttempts, err)
+				if !retryable {
+					return err
+				}
+				if attempt < maxAddTrackAttempts {
+					if err := backoffWait(ctx, attempt); err != nil {
+						return err
+					}
+				}
+			}
+			log.Printf("add_track exhausted %d attempts on cycle=%d", maxAddTrackAttempts, cycle)
+		}
+		if lastErr == nil {
+			lastErr = errors.New("add_track failed")
+		}
+		return fmt.Errorf("add_track failed after %d join cycles: %w", maxJoinCycles, lastErr)
+	}
+
+	pullTracks := func(tracks []wsTrack) error {
+		pullMu.Lock()
+		defer pullMu.Unlock()
+		sessionID := currentSessionID()
+		wanted := make([]map[string]string, 0, len(tracks))
+		keys := make([]string, 0, len(tracks))
+		for _, t := range tracks {
+			if t.SessionID == "" || t.TrackName == "" || t.SessionID == sessionID {
+				continue
+			}
+			key := t.SessionID + "|" + t.TrackName
+			if pulled[key] {
+				continue
+			}
+			keys = append(keys, key)
+			wanted = append(wanted, map[string]string{
+				"location":  "remote",
+				"trackName": t.TrackName,
+				"sessionId": t.SessionID,
+			})
+		}
+		if len(wanted) == 0 {
+			return nil
+		}
+		if err := pullTracksWithRetry(wanted); err != nil {
+			return err
+		}
+		// Mark pulled only after successful add_track + renegotiate.
+		for _, key := range keys {
+			pulled[key] = true
+		}
 		return nil
 	}
 
