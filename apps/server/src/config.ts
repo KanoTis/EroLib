@@ -1,7 +1,5 @@
 import path from "node:path";
 
-export type LiveRecorderMode = "auto" | "native" | "browser";
-
 export interface AppConfig {
   port: number;
   host: string;
@@ -15,8 +13,6 @@ export interface AppConfig {
   maxDownloadConcurrency: number;
   webDistDir: string | null;
   nodeEnv: string;
-  /** auto: prefer Go pion binary when present; native|browser force path */
-  liveRecorder: LiveRecorderMode;
   /** Absolute or PATH-resolved path to live-record binary */
   liveRecorderBin: string | null;
 }
@@ -70,14 +66,6 @@ export function loadConfig(): AppConfig {
     envOptionalString("WEB_DIST_DIR") ??
     path.resolve(cwd, "../web/dist");
 
-  const liveRecorderRaw = (
-    envOptionalString("LIVE_RECORDER") ?? "auto"
-  ).toLowerCase();
-  const liveRecorder: LiveRecorderMode =
-    liveRecorderRaw === "native" || liveRecorderRaw === "browser"
-      ? liveRecorderRaw
-      : "auto";
-
   return {
     port: envInt("PORT", 8080),
     host: envString("HOST", "0.0.0.0"),
@@ -91,7 +79,6 @@ export function loadConfig(): AppConfig {
     maxDownloadConcurrency: envInt("MAX_DOWNLOAD_CONCURRENCY", 2),
     webDistDir: webDist,
     nodeEnv: envString("NODE_ENV", "development"),
-    liveRecorder,
     liveRecorderBin: envOptionalString("LIVE_RECORDER_BIN"),
   };
 }

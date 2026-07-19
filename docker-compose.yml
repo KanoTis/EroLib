@@ -2,7 +2,6 @@ services:
   app:
     image: ghcr.io/kanotis/erolib:latest
     init: true
-    ipc: host
     # 本地改源码构建时改用：
     # build: .
     # image: erolib:local
@@ -21,8 +20,7 @@ services:
       SYNC_INTERVAL_HOURS: "4"
       MAX_DOWNLOAD_CONCURRENCY: "2"
       WEB_DIST_DIR: /app/apps/web/dist
-      # auto | native | browser — native uses Go/pion live-record
-      LIVE_RECORDER: auto
+      # Go/pion live-record (built into image)
       LIVE_RECORDER_BIN: /usr/local/bin/live-record
     volumes:
       - ./data:/data

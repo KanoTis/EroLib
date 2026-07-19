@@ -1,5 +1,5 @@
 // Package main records Otobanana Cloudflare Realtime live audio without a browser.
-// Protocol mirrors apps/server/src/jobs/live-browser-script.js.
+// Protocol: join → track announce → add_track → renegotiate → Opus RTP → Ogg.
 package main
 
 import (

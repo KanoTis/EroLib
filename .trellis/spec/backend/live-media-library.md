@@ -13,12 +13,14 @@ Executable contracts for Otobanana live recordings that appear in the media libr
 ### Disk
 
 ```text
-{MEDIA_DIR}/{provider}/live/{authorId}/{roomSafe}/audio.wav
+{MEDIA_DIR}/{provider}/live/{authorId}/{roomSafe}/audio.ogg
+# Historical browser-era files may still be audio.wav
 ```
 
 - Helper: `liveMediaDir(mediaRoot, provider, authorId, roomId)` in `apps/server/src/storage/paths.ts`.
 - `roomSafe`: `roomId` with `:` → `_`, then `sanitizePathSegment`.
 - Do **not** use `DATA_DIR/live` as the finished-media path.
+- New recordings from native `live-record` write **`audio.ogg`** (Ogg Opus). Legacy **`audio.wav`** rows remain playable when present.
 
 ### DB: `live_media`
 
@@ -27,7 +29,7 @@ Executable contracts for Otobanana live recordings that appear in the media libr
 | `provider`, `room_id` | unique key |
 | `author_id`, `author_name`, `title` | display |
 | `job_id` | optional link to `live_record_jobs.id` |
-| `audio_ext` | default `wav` |
+| `audio_ext` | default `wav` (schema); new native jobs write `ogg` |
 | `media_rel_path` | relative to **MEDIA_DIR** (forward slashes) |
 | `bytes`, `duration_seconds`, `recorded_at` | optional metrics |
 
@@ -36,7 +38,7 @@ Parallel to VOD: `works` remains VOD-only. `live_record_jobs` is the recording p
 ### API
 
 - `GET /api/live/media?q=&provider=&limit=&offset=` → `LiveMediaPublic[]`
-- `GET /api/live/media/:provider/:roomId/audio` → audio stream (`audio/wav`, Range supported)
+- `GET /api/live/media/:provider/:roomId/audio` → audio stream (Content-Type from `audio_ext`: `audio/ogg` or `audio/wav`; Range supported)
 - `DELETE /api/live/media/:provider/:roomId` → `{ ok: true }`; missing row → 404
 - `DELETE /api/live/jobs/:id` → `{ ok: true }`; missing job → 404
 
@@ -62,9 +64,11 @@ Rules:
 
 ### Recorder complete path
 
-1. Write PCM/WAV under `liveMediaDir(config.mediaDir, ...)`.
+1. Spawn Go/pion `live-record` binary; write Ogg Opus under `liveMediaDir(config.mediaDir, ...)` as `audio.ogg`.
 2. Set `live_record_jobs.media_rel_path` to path relative to `mediaDir`.
-3. Upsert `live_media` on `(provider, room_id)` when bytes are sufficient for a playable file.
+3. Upsert `live_media` on `(provider, room_id)` when bytes are sufficient for a playable file (`audio_ext=ogg`).
+
+Missing binary: job fails with a readable error (build `apps/live-record` or set `LIVE_RECORDER_BIN`). **No browser / Playwright fallback.**
 
 ### Library UI
 
@@ -94,12 +98,14 @@ Rules:
 | `DELETE` media unknown `(provider, roomId)` | 404 `{ error: "Not found" }` |
 | `DELETE` job invalid / missing id | 400 invalid id / 404 not found |
 | `DELETE` when file already gone | 200 `{ ok: true }` (DB still cleaned) |
+| `live-record` binary missing | job `failed` with build / `LIVE_RECORDER_BIN` hint |
 
 ## 5. Good / Base / Bad
 
-- **Good**: completed job → file under `media/otobanana/live/.../audio.wav` + `live_media` row + library play works.
+- **Good**: completed job → file under `media/otobanana/live/.../audio.ogg` + `live_media` row + library play works.
 - **Base**: empty `live_media` → library shows only VOD (or empty state).
-- **Bad**: writing finished WAV only under `data/live` without `live_media` upsert → library cannot play.
+- **Bad**: writing finished media only under `data/live` without `live_media` upsert → library cannot play.
+- **Bad**: expecting Playwright/Chromium fallback when binary is missing → recording must fail clearly.
 
 ## 6. Tests Required
 
@@ -124,23 +130,33 @@ const outDir = liveMediaDir(config.mediaDir, provider, authorId, roomId);
 // mediaRelPath relative to mediaDir; upsert live_media; serve via /api/live/media/.../audio
 ```
 
-#### Wrong (build)
+#### Wrong (recorder)
 
-```json
-// package.json — tsc only; live-browser-script.js never reaches dist
-"build": "tsc -p tsconfig.json"
+```ts
+// Browser fallback when native binary is missing
+import { chromium } from "playwright";
+await chromium.launch({ headless: true });
+```
+
+#### Correct (recorder)
+
+```ts
+// Native-only: resolve live-record binary or fail the job
+const bin = await resolveNativeBin(config); // throws if missing
+// spawn bin → audio.ogg → upsert live_media with audio_ext=ogg
 ```
 
 #### Correct (build)
 
 ```json
-"build": "tsc -p tsconfig.json && node scripts/copy-runtime-assets.mjs"
+"build": "tsc -p tsconfig.json"
 ```
+
+No runtime browser script copy step is required.
 
 ## Design Decisions
 
 - **Independent `live_media` table** (not `works.kind`): keeps VOD sync/retry isolation.
 - **`media/{provider}/live/...` partition**: avoids colliding with VOD `media/{provider}/{author}/{workId}`.
-- **Browser inject script is a runtime asset**: `apps/server/src/jobs/live-browser-script.js` is plain JS loaded via `readFile` relative to compiled `live-recorder.js`. Server `build` must copy it to `dist/jobs/` (`scripts/copy-runtime-assets.mjs` after `tsc`). `tsc` alone does not emit this file — missing copy → production `ENOENT` and live auto-record fails. `.dockerignore` must **not** exclude `apps/server/scripts/copy-runtime-assets.mjs` (smoke/probe scripts may still be ignored).
-
-- **Docker runtime must ship Playwright Chromium**: `live-recorder` calls `chromium.launch({ headless: true })`. The npm `playwright` package alone is not enough — the GHCR image must install matching browser binaries + OS deps in the **runtime** stage after `node_modules` is present, e.g. `apps/server/node_modules/.bin/playwright install --with-deps --only-shell chromium`, with `PLAYWRIGHT_BROWSERS_PATH` set at install and runtime (currently `/ms-playwright`). Skipping this produces `Executable doesn't exist at .../chromium_headless_shell-...`. Prefer the package-local CLI (version-locked to lockfile), never floating `npx playwright@latest`. Compose should use `init: true` and `ipc: host` per Playwright Docker recommendations.
+- **Native-only live recording**: `live-recorder` spawns the Go/pion binary from `apps/live-record` (Docker: `/usr/local/bin/live-record`). Optional override: `LIVE_RECORDER_BIN`. Missing binary fails the job with a clear error; there is **no** Playwright / Chromium path.
+- **Docker runtime must ship `live-record`**: multi-stage build compiles the Go binary and copies it into the runtime image alongside Node + ffmpeg. No browser install layer. Compose may set `init: true` for child-process reaping; `ipc: host` is not required.

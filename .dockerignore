@@ -28,9 +28,8 @@ docs
 **/*.db-*
 **/*.tsbuildinfo
 **/.DS_Store
-# Server build needs copy-runtime-assets.mjs; exclude one-off smoke/probe scripts only
+# Exclude one-off smoke scripts and tests from image context
 apps/server/scripts/smoke-*
-apps/server/scripts/probe-*
 apps/server/test
 apps/server/data
 apps/server/media

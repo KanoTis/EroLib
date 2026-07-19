@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc -p tsconfig.json && node scripts/copy-runtime-assets.mjs",
+    "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "node dist/index.js",
     "test": "tsx --test test/**/*.test.ts"
@@ -17,7 +17,6 @@
     "drizzle-orm": "^0.43.1",
     "hono": "^4.7.7",
     "node-id3": "^0.2.9",
-    "playwright": "^1.61.1",
     "zod": "^3.24.3"
   },
   "devDependencies": {

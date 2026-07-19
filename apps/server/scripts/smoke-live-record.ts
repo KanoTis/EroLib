@@ -1,5 +1,5 @@
 /**
- * Phase 2 smoke: login → find open realtime room → record ~20s → check wav.
+ * Phase 2 smoke: login → find open realtime room → record ~20s → check ogg.
  *
  * Usage:
  *   OTOBANANA_EMAIL=... OTOBANANA_PASSWORD=... pnpm --filter @erolib/server exec tsx scripts/smoke-live-record.ts
@@ -188,7 +188,7 @@ async function main(): Promise<void> {
     process.exit(0);
   }
   try {
-    const s = await stat(path.join(dir, "audio.wav"));
+    const s = await stat(path.join(dir, "audio.ogg"));
     if (s.size > 0) {
       console.log("SMOKE PARTIAL OK (file written, size=", s.size, ")");
       process.exit(0);

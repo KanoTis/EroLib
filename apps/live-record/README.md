@@ -2,8 +2,7 @@
 
 Browserless Otobanana live recorder using [pion/webrtc](https://github.com/pion/webrtc).
 
-Implements the same Cloudflare Realtime listener flow as
-`apps/server/src/jobs/live-browser-script.js`:
+Implements the Cloudflare Realtime listener flow:
 
 `join` → WebSocket track announce → `add_track` → `renegotiate` → Opus RTP → Ogg file.
 
@@ -28,14 +27,13 @@ go build -o live-record.exe .
 
 ## Server integration
 
-Node `live-recorder` prefers this binary when found (`LIVE_RECORDER=auto`, default):
+Node `live-recorder` **requires** this binary (native-only; no browser fallback):
 
 | Env | Meaning |
 |-----|---------|
-| `LIVE_RECORDER=auto` | Use binary if present, else Playwright |
-| `LIVE_RECORDER=native` | Require binary |
-| `LIVE_RECORDER=browser` | Force Playwright |
-| `LIVE_RECORDER_BIN` | Explicit path to binary |
+| `LIVE_RECORDER_BIN` | Optional explicit path. Docker default: `/usr/local/bin/live-record` |
 
-Search paths include `/usr/local/bin/live-record` and monorepo
-`apps/live-record/live-record(.exe)`.
+If unset, the server searches `/usr/local/bin/live-record`, monorepo
+`apps/live-record/live-record(.exe)`, and `live-record` on `PATH`.
+
+Missing binary → live record job `failed` with a build / `LIVE_RECORDER_BIN` hint.
