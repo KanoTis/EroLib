@@ -280,6 +280,17 @@ func isRetryableAddTrack(status int, err error) bool {
 	return status == 429 || status >= 500
 }
 
+// isEmptyTrackError reports CF/Otobanana ghost tracks with no media from the
+// publisher. These must not end an otherwise healthy recording session.
+func isEmptyTrackError(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "empty_track_error") ||
+		(strings.Contains(s, "missing sessionDescription") && strings.Contains(s, "empty_track"))
+}
+
 func backoffWait(ctx context.Context, attempt int) error {
 	// attempt is 1-based after a failure: 1s, 2s, 4s
 	d := time.Duration(1<<uint(attempt-1)) * time.Second
@@ -631,6 +642,16 @@ func record(ctx context.Context, opts recordOpts) error {
 			return nil
 		}
 		if err := pullTracksWithRetry(wanted); err != nil {
+			if isEmptyTrackError(err) {
+				// Ghost track: keep receiving existing RTP; do not mark pulled
+				// so a later re-announce can retry the same key.
+				names := make([]string, 0, len(wanted))
+				for _, w := range wanted {
+					names = append(names, w["trackName"])
+				}
+				log.Printf("ignore empty_track n=%d tracks=%v: %v", len(wanted), names, err)
+				return nil
+			}
 			return err
 		}
 		// Mark pulled only after successful add_track + renegotiate.

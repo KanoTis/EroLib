@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { access, mkdir, stat } from "node:fs/promises";
+import { access, mkdir, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { and, eq } from "drizzle-orm";
@@ -74,6 +74,43 @@ function nowSql(): string {
   return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
 }
 
+/** Next free segment name: audio.ogg, audio_2.ogg, audio_3.ogg, … */
+export function nextLiveAudioFileName(existingNames: string[]): string {
+  let maxN = 0;
+  for (const name of existingNames) {
+    if (name === "audio.ogg") {
+      maxN = Math.max(maxN, 1);
+      continue;
+    }
+    const m = /^audio_(\d+)\.ogg$/i.exec(name);
+    if (m) {
+      const n = Number.parseInt(m[1] ?? "0", 10);
+      if (Number.isFinite(n) && n > maxN) maxN = n;
+    }
+  }
+  if (maxN === 0) return "audio.ogg";
+  return `audio_${maxN + 1}.ogg`;
+}
+
+/** Whether a new attempt should replace the library pointer (longest-wins). */
+export function shouldReplaceLiveMedia(
+  existingBytes: number | null | undefined,
+  newBytes: number,
+): boolean {
+  if (existingBytes == null || !Number.isFinite(existingBytes)) return true;
+  return newBytes > existingBytes;
+}
+
+async function pickNextLiveOutFile(outDir: string): Promise<string> {
+  let names: string[] = [];
+  try {
+    names = await readdir(outDir);
+  } catch {
+    names = [];
+  }
+  return path.join(outDir, nextLiveAudioFileName(names));
+}
+
 export interface LiveRecorder {
   ensureStarted(job: LiveRecordJobRow, accessToken: string): Promise<void>;
   stop(jobId: number, reason?: "ended" | "failed" | "shutdown"): Promise<void>;
@@ -135,7 +172,11 @@ export function createLiveRecorder(
     const authorName =
       sub?.displayName?.trim() || sub?.username?.trim() || null;
     const [existing] = await db
-      .select({ id: liveMedia.id })
+      .select({
+        id: liveMedia.id,
+        bytes: liveMedia.bytes,
+        mediaRelPath: liveMedia.mediaRelPath,
+      })
       .from(liveMedia)
       .where(
         and(
@@ -144,28 +185,50 @@ export function createLiveRecorder(
         ),
       )
       .limit(1);
-    const values = {
-      authorId: job.authorId,
-      authorName,
-      title: job.title,
-      jobId: job.id,
-      audioExt,
-      mediaRelPath: mediaPath,
-      bytes: fileBytes > 0 ? fileBytes : null,
-      recordedAt: now,
-      updatedAt: now,
-    };
+    const replaceMedia = shouldReplaceLiveMedia(existing?.bytes, fileBytes);
     if (existing) {
-      await db
-        .update(liveMedia)
-        .set(values)
-        .where(eq(liveMedia.id, existing.id));
+      if (replaceMedia) {
+        await db
+          .update(liveMedia)
+          .set({
+            authorId: job.authorId,
+            authorName,
+            title: job.title,
+            jobId: job.id,
+            audioExt,
+            mediaRelPath: mediaPath,
+            bytes: fileBytes > 0 ? fileBytes : null,
+            recordedAt: now,
+            updatedAt: now,
+          })
+          .where(eq(liveMedia.id, existing.id));
+      } else {
+        await db
+          .update(liveMedia)
+          .set({
+            authorId: job.authorId,
+            authorName,
+            title: job.title,
+            jobId: job.id,
+            audioExt,
+            updatedAt: now,
+          })
+          .where(eq(liveMedia.id, existing.id));
+      }
     } else {
       await db.insert(liveMedia).values({
         provider: job.provider,
         roomId: job.roomId,
-        ...values,
+        authorId: job.authorId,
+        authorName,
+        title: job.title,
+        jobId: job.id,
+        audioExt,
+        mediaRelPath: mediaPath,
+        bytes: fileBytes > 0 ? fileBytes : null,
+        recordedAt: now,
         createdAt: now,
+        updatedAt: now,
       });
     }
   }
@@ -192,7 +255,7 @@ export function createLiveRecorder(
       job.roomId,
     );
     await mkdir(outDir, { recursive: true });
-    const outFile = path.join(outDir, "audio.ogg");
+    const outFile = await pickNextLiveOutFile(outDir);
     const relPath = path
       .relative(config.mediaDir, outFile)
       .split(path.sep)

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/live-media-library.md", "reason": "Verify library path, longest-wins pointer, delete room-dir cascade after multi-segment"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend quality/convention checklist"}
+{"file": ".trellis/tasks/07-20-fix-live-record-early-complete/prd.md", "reason": "Acceptance criteria AC1–AC7"}
+{"file": ".trellis/tasks/07-20-fix-live-record-early-complete/design.md", "reason": "Non-fatal empty_track and resume reset contracts"}

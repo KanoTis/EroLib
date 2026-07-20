@@ -14,13 +14,16 @@ Executable contracts for Otobanana live recordings that appear in the media libr
 
 ```text
 {MEDIA_DIR}/{provider}/live/{authorId}/{roomSafe}/audio.ogg
+{MEDIA_DIR}/{provider}/live/{authorId}/{roomSafe}/audio_2.ogg   # resume segments
 # Historical browser-era files may still be audio.wav
 ```
 
 - Helper: `liveMediaDir(mediaRoot, provider, authorId, roomId)` in `apps/server/src/storage/paths.ts`.
 - `roomSafe`: `roomId` with `:` → `_`, then `sanitizePathSegment`.
 - Do **not** use `DATA_DIR/live` as the finished-media path.
-- New recordings from native `live-record` write **`audio.ogg`** (Ogg Opus). Legacy **`audio.wav`** rows remain playable when present.
+- New recordings from native `live-record` write **Ogg Opus**. First attempt prefers `audio.ogg`; if that file already exists (resume after process death), write `audio_2.ogg`, `audio_3.ogg`, … under the same room dir.
+- Legacy **`audio.wav`** rows remain playable when present.
+- **Library pointer (longest-wins):** `live_media.media_rel_path` / `bytes` point at the **largest** segment for that room. Shorter residual files stay on disk but are not listed in the UI. Delete removes the whole room directory (all segments).
 
 ### DB: `live_media`
 
@@ -64,9 +67,14 @@ Rules:
 
 ### Recorder complete path
 
-1. Spawn Go/pion `live-record` binary; write Ogg Opus under `liveMediaDir(config.mediaDir, ...)` as `audio.ogg`.
-2. Set `live_record_jobs.media_rel_path` to path relative to `mediaDir`.
-3. Upsert `live_media` on `(provider, room_id)` when bytes are sufficient for a playable file (`audio_ext=ogg`).
+1. Spawn Go/pion `live-record` binary; write Ogg Opus under `liveMediaDir(config.mediaDir, ...)` using the next free segment name (`audio.ogg` / `audio_N.ogg`).
+2. Set `live_record_jobs.media_rel_path` to **this attempt’s** path relative to `mediaDir`.
+3. Upsert `live_media` on `(provider, room_id)` when bytes ≥ playable threshold (`audio_ext=ogg`):
+   - Insert when no row.
+   - If existing row and **new bytes > existing.bytes** (or existing.bytes null) → update path/bytes/jobId/recordedAt.
+   - If new bytes ≤ existing.bytes → keep existing path/bytes (do not shrink library playable file); may still refresh jobId/title/author.
+4. **Mid-session `empty_track_error`:** native recorder must ignore ghost tracks and keep writing the current file (not exit as completed).
+5. **Resume while still onair:** if job is `completed`/`failed`, no active recorder, and room is still open → poller resets job to `pending_media` and re-spawns (new segment file).
 
 Missing binary: job fails with a readable error (build `apps/live-record` or set `LIVE_RECORDER_BIN`). **No browser / Playwright fallback.**
 

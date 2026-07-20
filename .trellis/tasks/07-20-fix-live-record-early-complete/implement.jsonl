@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/live-media-library.md", "reason": "Disk path, live_media unique room, upsert and delete cascade contracts for multi-segment resume"}
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend guideline index for layer conventions"}
+{"file": ".trellis/tasks/07-20-fix-live-record-early-complete/design.md", "reason": "empty_track policy, segment naming, longest-wins upsert, poller reset"}
+{"file": ".trellis/tasks/07-20-fix-live-record-early-complete/prd.md", "reason": "AC1–AC7 and decisions D1–D2"}

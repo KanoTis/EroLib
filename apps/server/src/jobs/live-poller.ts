@@ -215,7 +215,33 @@ export function createLivePoller(
     try {
       const room = await getUserOnair(sub.authorId, token);
       if (room && room.isOpen) {
-        const job = await ensureJob(room);
+        let job = await ensureJob(room);
+        // Same room still open but prior attempt already terminal (e.g. process
+        // exit / empty_track before Go ignore): reset so ensureStarted can re-spawn.
+        if (
+          job &&
+          (job.state === "completed" || job.state === "failed") &&
+          !recorder.isActive(job.id)
+        ) {
+          await db
+            .update(liveRecordJobs)
+            .set({
+              state: "pending_media",
+              error: null,
+              endedAt: null,
+              updatedAt: now,
+            })
+            .where(eq(liveRecordJobs.id, job.id));
+          console.log(
+            `[live-poller] resume job=${job.id} room=${job.roomId} from=${job.state}`,
+          );
+          const [refreshed] = await db
+            .select()
+            .from(liveRecordJobs)
+            .where(eq(liveRecordJobs.id, job.id))
+            .limit(1);
+          job = refreshed ?? job;
+        }
         if (job && token) {
           await recorder.ensureStarted(job, token);
         }
