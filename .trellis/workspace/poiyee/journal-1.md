@@ -275,3 +275,36 @@ Implemented Otobanana live discovery/polling/Playwright WAV recording, followee 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: Archive all tasks and close library polish
+
+**Date**: 2026-07-20
+**Task**: Archive all tasks and close library polish
+**Branch**: `master`
+
+### Summary
+
+提交媒体库滚动恢复修复；取消 frontend/player 样式子任务；归档全部 active task（docker slim/ffmpeg、remove-playwright、author-sync、library-scroll 父树）。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d890091` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
