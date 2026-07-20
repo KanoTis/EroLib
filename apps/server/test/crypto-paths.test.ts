@@ -10,6 +10,7 @@ import {
   decryptString,
 } from "../src/crypto/credentials.js";
 import {
+  authorAvatarPaths,
   isLocalAudioAvailable,
   mediaWorkDir,
   resolveAuthorId,
@@ -59,6 +60,15 @@ describe("media paths", () => {
     assert.ok(m.dir.replace(/\\/g, "/").endsWith("/media/koekoe/author1/123"));
     assert.ok(m.audio("mp3").endsWith("audio.mp3"));
     assert.ok(m.metaJson.endsWith("meta.json"));
+  });
+
+  it("builds author avatar paths under media root", () => {
+    const a = authorAvatarPaths("/media", "otobanana", "user-uuid");
+    assert.ok(
+      a.dir.replace(/\\/g, "/").endsWith("/media/otobanana/authors/user-uuid"),
+    );
+    assert.ok(a.file("png").replace(/\\/g, "/").endsWith("/avatar.png"));
+    assert.equal(a.rel("jpg"), "otobanana/authors/user-uuid/avatar.jpg");
   });
 });
 

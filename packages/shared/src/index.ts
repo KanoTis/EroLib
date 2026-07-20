@@ -173,6 +173,16 @@ export interface LiveSubscriptionPublic {
   updatedAt: string;
 }
 
+/** Local author profile for author page (`GET /api/authors/:provider/:authorId`). */
+export interface AuthorPublic {
+  provider: ProviderId;
+  authorId: string;
+  displayName: string | null;
+  username: string | null;
+  hasAvatar: boolean;
+  subscription: LiveSubscriptionPublic | null;
+}
+
 /** Candidate from GET /api/authors/search (manual subscribe add). */
 export interface AuthorSearchHit {
   provider: ProviderId;

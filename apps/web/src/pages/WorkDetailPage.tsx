@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { WorkPublic } from "@erolib/shared";
 import { api } from "../api";
+import { AuthorLink } from "../components/AuthorLink";
 import { WorkCover } from "../components/WorkCover";
 import { IconBack, IconPlay, IconRefresh } from "../components/Icons";
 import { usePlayer } from "../player/PlayerContext";
@@ -94,7 +95,14 @@ export function WorkDetailPage() {
             <dl className="meta">
               <div>
                 <dt>作者</dt>
-                <dd>{work.authorName ?? work.authorId ?? "—"}</dd>
+                <dd>
+                  <AuthorLink
+                    provider={work.provider}
+                    authorId={work.authorId}
+                  >
+                    {work.authorName ?? work.authorId ?? "—"}
+                  </AuthorLink>
+                </dd>
               </div>
               <div>
                 <dt>Work ID</dt>
