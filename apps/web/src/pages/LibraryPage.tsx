@@ -42,6 +42,9 @@ type LibraryItem =
 
 const VIEW_MODE_KEY = "erolib.library.viewMode";
 const PAGE_SIZE = 50;
+const SCROLL_KEY = "erolib.library.scrollY";
+const VOD_OFFSET_KEY = "erolib.library.vodOffset";
+const LIVE_OFFSET_KEY = "erolib.library.liveOffset";
 
 const VIEW_MODE_OPTIONS: {
   id: LibraryViewMode;
@@ -110,6 +113,12 @@ export function LibraryPage() {
     readViewMode(),
   );
   const requestIdRef = useRef(0);
+  const needsRestoreRef = useRef(true);
+  const vodOffsetRef = useRef(0);
+  const liveOffsetRef = useRef(0);
+
+  vodOffsetRef.current = vodOffset;
+  liveOffsetRef.current = liveOffset;
 
   const wantVod = kind === "all" || kind === "vod";
   const wantLive = kind === "all" || kind === "live";
@@ -184,13 +193,25 @@ export function LibraryPage() {
       setLiveHasMore(false);
       const fetchVod = kind === "all" || kind === "vod";
       const fetchLive = kind === "all" || kind === "live";
+      let savedVodLimit = PAGE_SIZE;
+      let savedLiveLimit = PAGE_SIZE;
+      if (needsRestoreRef.current) {
+        try {
+          const sv = sessionStorage.getItem(VOD_OFFSET_KEY);
+          const sl = sessionStorage.getItem(LIVE_OFFSET_KEY);
+          if (sv) savedVodLimit = Math.max(PAGE_SIZE, Number(sv));
+          if (sl) savedLiveLimit = Math.max(PAGE_SIZE, Number(sl));
+        } catch {
+          // ignore storage access errors
+        }
+      }
       const [vod, live] = await Promise.all([
         fetchVod
           ? api.works({
               q: q || undefined,
               status: status || undefined,
               provider: provider || undefined,
-              limit: PAGE_SIZE,
+              limit: savedVodLimit,
               offset: 0,
             })
           : Promise.resolve([] as WorkPublic[]),
@@ -198,7 +219,7 @@ export function LibraryPage() {
           ? api.liveMedia({
               q: q || undefined,
               provider: provider || undefined,
-              limit: PAGE_SIZE,
+              limit: savedLiveLimit,
               offset: 0,
             })
           : Promise.resolve([] as LiveMediaPublic[]),
@@ -208,13 +229,15 @@ export function LibraryPage() {
       setLiveItems(live);
       setVodOffset(vod.length);
       setLiveOffset(live.length);
-      setVodHasMore(fetchVod && vod.length === PAGE_SIZE);
-      setLiveHasMore(fetchLive && live.length === PAGE_SIZE);
+      setVodHasMore(fetchVod && vod.length === savedVodLimit);
+      setLiveHasMore(fetchLive && live.length === savedLiveLimit);
     } catch (e) {
       if (reqId !== requestIdRef.current) return;
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      if (reqId === requestIdRef.current) setLoading(false);
+      if (reqId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
   }
 
@@ -293,6 +316,44 @@ export function LibraryPage() {
     void loadInitial();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount + type query
   }, [kind]);
+
+  useEffect(() => {
+    const onClick = (e: Event) => {
+      const target = e.target as HTMLElement;
+      if (target.closest("a")) {
+        try {
+          sessionStorage.setItem(SCROLL_KEY, String(window.scrollY));
+          sessionStorage.setItem(VOD_OFFSET_KEY, String(vodOffsetRef.current));
+          sessionStorage.setItem(LIVE_OFFSET_KEY, String(liveOffsetRef.current));
+        } catch {
+          // ignore storage access errors
+        }
+      }
+    };
+    document.addEventListener("click", onClick, true);
+    return () => {
+      document.removeEventListener("click", onClick, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (loading || !needsRestoreRef.current) return;
+    needsRestoreRef.current = false;
+    try {
+      const saved = sessionStorage.getItem(SCROLL_KEY);
+      if (saved !== null) {
+        const y = Number(saved);
+        if (Number.isFinite(y) && y > 0) {
+          window.scrollTo(0, y);
+        }
+        sessionStorage.removeItem(SCROLL_KEY);
+        sessionStorage.removeItem(VOD_OFFSET_KEY);
+        sessionStorage.removeItem(LIVE_OFFSET_KEY);
+      }
+    } catch {
+      // ignore storage access errors
+    }
+  }, [loading]);
 
   useEffect(() => {
     const next = parseKind(searchParams.get("type"));
