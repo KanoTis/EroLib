@@ -42,9 +42,25 @@ type LibraryItem =
 
 const VIEW_MODE_KEY = "erolib.library.viewMode";
 const PAGE_SIZE = 50;
-const SCROLL_KEY = "erolib.library.scrollY";
-const VOD_OFFSET_KEY = "erolib.library.vodOffset";
-const LIVE_OFFSET_KEY = "erolib.library.liveOffset";
+/** Must match server max on GET /api/works and /api/live/media. */
+const API_MAX_LIMIT = 200;
+const SCROLL_RESTORE_KEY = "erolib.library.scrollRestore";
+/** Legacy keys from the first scroll-restore implementation. */
+const LEGACY_SCROLL_KEYS = [
+  "erolib.library.scrollY",
+  "erolib.library.vodOffset",
+  "erolib.library.liveOffset",
+] as const;
+
+type LibraryScrollRestore = {
+  v: 1;
+  scrollY: number;
+  vodCount: number;
+  liveCount: number;
+  q: string;
+  status: string;
+  provider: string;
+};
 
 const VIEW_MODE_OPTIONS: {
   id: LibraryViewMode;
@@ -91,14 +107,99 @@ function parseKind(raw: string | null): KindFilter {
   return "all";
 }
 
+function normalizeCount(n: unknown): number {
+  const v = typeof n === "number" ? n : Number(n);
+  if (!Number.isFinite(v) || v <= 0) return PAGE_SIZE;
+  return Math.max(PAGE_SIZE, Math.floor(v));
+}
+
+function readScrollRestore(): LibraryScrollRestore | null {
+  try {
+    const raw = sessionStorage.getItem(SCROLL_RESTORE_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as Partial<LibraryScrollRestore>;
+    if (data.v !== 1) return null;
+    const scrollY = Number(data.scrollY);
+    return {
+      v: 1,
+      scrollY: Number.isFinite(scrollY) && scrollY > 0 ? scrollY : 0,
+      vodCount: normalizeCount(data.vodCount),
+      liveCount: normalizeCount(data.liveCount),
+      q: typeof data.q === "string" ? data.q : "",
+      status: typeof data.status === "string" ? data.status : "",
+      provider: typeof data.provider === "string" ? data.provider : "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeScrollRestore(data: LibraryScrollRestore): void {
+  try {
+    sessionStorage.setItem(SCROLL_RESTORE_KEY, JSON.stringify(data));
+  } catch {
+    // ignore private mode / blocked storage
+  }
+}
+
+function clearScrollRestore(): void {
+  try {
+    sessionStorage.removeItem(SCROLL_RESTORE_KEY);
+    for (const key of LEGACY_SCROLL_KEYS) {
+      sessionStorage.removeItem(key);
+    }
+  } catch {
+    // ignore private mode / blocked storage
+  }
+}
+
+async function fetchUpToCount<T>(
+  fetchPage: (limit: number, offset: number) => Promise<T[]>,
+  targetCount: number,
+): Promise<{ items: T[]; hasMore: boolean }> {
+  const target = normalizeCount(targetCount);
+  const items: T[] = [];
+  let offset = 0;
+  let hasMore = false;
+
+  while (items.length < target) {
+    const limit = Math.min(API_MAX_LIMIT, target - items.length);
+    const page = await fetchPage(limit, offset);
+    items.push(...page);
+    offset += page.length;
+    if (page.length < limit) {
+      hasMore = false;
+      break;
+    }
+    if (items.length >= target) {
+      hasMore = true;
+      break;
+    }
+  }
+
+  return { items, hasMore };
+}
+
 export function LibraryPage() {
   const { play } = usePlayer();
   const [searchParams, setSearchParams] = useSearchParams();
+  const restoreRef = useRef(readScrollRestore());
+  const needsRestoreRef = useRef(restoreRef.current != null);
+  const readyToSaveRef = useRef(false);
+  const persistRef = useRef({
+    q: "",
+    status: "",
+    provider: "",
+    vodOffset: 0,
+    liveOffset: 0,
+  });
   const [works, setWorks] = useState<WorkPublic[]>([]);
   const [liveItems, setLiveItems] = useState<LiveMediaPublic[]>([]);
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState("");
-  const [provider, setProvider] = useState("");
+  const [q, setQ] = useState(() => restoreRef.current?.q ?? "");
+  const [status, setStatus] = useState(() => restoreRef.current?.status ?? "");
+  const [provider, setProvider] = useState(
+    () => restoreRef.current?.provider ?? "",
+  );
   const [kind, setKind] = useState<KindFilter>(() =>
     parseKind(searchParams.get("type")),
   );
@@ -113,12 +214,8 @@ export function LibraryPage() {
     readViewMode(),
   );
   const requestIdRef = useRef(0);
-  const needsRestoreRef = useRef(true);
-  const vodOffsetRef = useRef(0);
-  const liveOffsetRef = useRef(0);
 
-  vodOffsetRef.current = vodOffset;
-  liveOffsetRef.current = liveOffset;
+  persistRef.current = { q, status, provider, vodOffset, liveOffset };
 
   const wantVod = kind === "all" || kind === "vod";
   const wantLive = kind === "all" || kind === "live";
@@ -181,6 +278,7 @@ export function LibraryPage() {
 
   async function loadInitial(): Promise<void> {
     const reqId = ++requestIdRef.current;
+    readyToSaveRef.current = false;
     try {
       setError(null);
       setLoading(true);
@@ -193,44 +291,49 @@ export function LibraryPage() {
       setLiveHasMore(false);
       const fetchVod = kind === "all" || kind === "vod";
       const fetchLive = kind === "all" || kind === "live";
-      let savedVodLimit = PAGE_SIZE;
-      let savedLiveLimit = PAGE_SIZE;
-      if (needsRestoreRef.current) {
-        try {
-          const sv = sessionStorage.getItem(VOD_OFFSET_KEY);
-          const sl = sessionStorage.getItem(LIVE_OFFSET_KEY);
-          if (sv) savedVodLimit = Math.max(PAGE_SIZE, Number(sv));
-          if (sl) savedLiveLimit = Math.max(PAGE_SIZE, Number(sl));
-        } catch {
-          // ignore storage access errors
-        }
-      }
-      const [vod, live] = await Promise.all([
+      const restore =
+        needsRestoreRef.current && restoreRef.current
+          ? restoreRef.current
+          : null;
+      const vodTarget = restore?.vodCount ?? PAGE_SIZE;
+      const liveTarget = restore?.liveCount ?? PAGE_SIZE;
+      const [vodResult, liveResult] = await Promise.all([
         fetchVod
-          ? api.works({
-              q: q || undefined,
-              status: status || undefined,
-              provider: provider || undefined,
-              limit: savedVodLimit,
-              offset: 0,
-            })
-          : Promise.resolve([] as WorkPublic[]),
+          ? fetchUpToCount(
+              (limit, offset) =>
+                api.works({
+                  q: q || undefined,
+                  status: status || undefined,
+                  provider: provider || undefined,
+                  limit,
+                  offset,
+                }),
+              vodTarget,
+            )
+          : Promise.resolve({ items: [] as WorkPublic[], hasMore: false }),
         fetchLive
-          ? api.liveMedia({
-              q: q || undefined,
-              provider: provider || undefined,
-              limit: savedLiveLimit,
-              offset: 0,
-            })
-          : Promise.resolve([] as LiveMediaPublic[]),
+          ? fetchUpToCount(
+              (limit, offset) =>
+                api.liveMedia({
+                  q: q || undefined,
+                  provider: provider || undefined,
+                  limit,
+                  offset,
+                }),
+              liveTarget,
+            )
+          : Promise.resolve({
+              items: [] as LiveMediaPublic[],
+              hasMore: false,
+            }),
       ]);
       if (reqId !== requestIdRef.current) return;
-      setWorks(vod);
-      setLiveItems(live);
-      setVodOffset(vod.length);
-      setLiveOffset(live.length);
-      setVodHasMore(fetchVod && vod.length === savedVodLimit);
-      setLiveHasMore(fetchLive && live.length === savedLiveLimit);
+      setWorks(vodResult.items);
+      setLiveItems(liveResult.items);
+      setVodOffset(vodResult.items.length);
+      setLiveOffset(liveResult.items.length);
+      setVodHasMore(fetchVod && vodResult.hasMore);
+      setLiveHasMore(fetchLive && liveResult.hasMore);
     } catch (e) {
       if (reqId !== requestIdRef.current) return;
       setError(e instanceof Error ? e.message : String(e));
@@ -318,41 +421,83 @@ export function LibraryPage() {
   }, [kind]);
 
   useEffect(() => {
-    const onClick = (e: Event) => {
-      const target = e.target as HTMLElement;
-      if (target.closest("a")) {
-        try {
-          sessionStorage.setItem(SCROLL_KEY, String(window.scrollY));
-          sessionStorage.setItem(VOD_OFFSET_KEY, String(vodOffsetRef.current));
-          sessionStorage.setItem(LIVE_OFFSET_KEY, String(liveOffsetRef.current));
-        } catch {
-          // ignore storage access errors
-        }
-      }
+    const scrollYRef = { current: window.scrollY };
+
+    const persist = (scrollY: number): void => {
+      if (!readyToSaveRef.current) return;
+      const s = persistRef.current;
+      writeScrollRestore({
+        v: 1,
+        scrollY: Math.max(0, scrollY),
+        vodCount: Math.max(PAGE_SIZE, s.vodOffset),
+        liveCount: Math.max(PAGE_SIZE, s.liveOffset),
+        q: s.q,
+        status: s.status,
+        provider: s.provider,
+      });
     };
-    document.addEventListener("click", onClick, true);
+
+    // Keep last known position. Router often resets window.scrollY to 0
+    // before unmount, so unmount must not trust window.scrollY alone.
+    const onScroll = (): void => {
+      scrollYRef.current = window.scrollY;
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+
+    // Save *before* navigation so scrollY is still correct (click/keyboard).
+    const onLeaveViaLink = (e: Event): void => {
+      const el = e.target;
+      if (!(el instanceof Element)) return;
+      const anchor = el.closest("a[href]");
+      if (!anchor) return;
+      const href = anchor.getAttribute("href");
+      if (!href || href.startsWith("#")) return;
+      persist(window.scrollY);
+    };
+    document.addEventListener("click", onLeaveViaLink, true);
+
     return () => {
-      document.removeEventListener("click", onClick, true);
+      window.removeEventListener("scroll", onScroll);
+      document.removeEventListener("click", onLeaveViaLink, true);
+      // Prefer live scrollY; if router already reset to 0, keep click-saved
+      // value or the last non-reset ref value.
+      const live = window.scrollY;
+      if (live > 0) {
+        persist(live);
+        return;
+      }
+      const existing = readScrollRestore();
+      if (existing && existing.scrollY > 0) {
+        persist(existing.scrollY);
+        return;
+      }
+      if (scrollYRef.current > 0) {
+        persist(scrollYRef.current);
+      }
     };
   }, []);
 
   useEffect(() => {
-    if (loading || !needsRestoreRef.current) return;
+    if (loading) return;
+    readyToSaveRef.current = true;
+    if (!needsRestoreRef.current) return;
     needsRestoreRef.current = false;
-    try {
-      const saved = sessionStorage.getItem(SCROLL_KEY);
-      if (saved !== null) {
-        const y = Number(saved);
-        if (Number.isFinite(y) && y > 0) {
-          window.scrollTo(0, y);
-        }
-        sessionStorage.removeItem(SCROLL_KEY);
-        sessionStorage.removeItem(VOD_OFFSET_KEY);
-        sessionStorage.removeItem(LIVE_OFFSET_KEY);
-      }
-    } catch {
-      // ignore storage access errors
-    }
+    const y = restoreRef.current?.scrollY ?? 0;
+    clearScrollRestore();
+    restoreRef.current = null;
+    if (!(y > 0)) return;
+
+    const apply = (): void => {
+      window.scrollTo(0, y);
+    };
+    // Double rAF: wait for list paint after loading → content swap.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        apply();
+        // Covers late layout (covers/fonts) once more on next frame.
+        requestAnimationFrame(apply);
+      });
+    });
   }, [loading]);
 
   useEffect(() => {
