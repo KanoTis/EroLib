@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 7
-- **Last Active**: 2026-07-19
+- **Total Sessions**: 8
+- **Last Active**: 2026-07-20
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~243 | Active |
+| `journal-1.md` | ~277 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 8 | 2026-07-20 | Issue #5 作者页导航 | `7118483`, `e12c734` | `KanoTis/issue-5` |
 | 7 | 2026-07-19 | 同步页作者订阅与 Live 瘦身 | `ccbb5d0` | `master` |
 | 6 | 2026-07-19 | 直播录制删除功能 | `3d15638` | `master` |
 | 5 | 2026-07-18 | 收尾全部 in_progress 任务 | `25a7a47`, `22cd2ec`, `c368350`, `4b5d6f2`, `6f5696b` | `master` |

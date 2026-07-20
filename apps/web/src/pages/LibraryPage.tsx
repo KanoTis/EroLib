@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import type { LiveMediaPublic, WorkPublic } from "@erolib/shared";
 import { api } from "../api";
+import { AuthorLink } from "../components/AuthorLink";
 import { WorkCover } from "../components/WorkCover";
 import {
   IconPlay,
@@ -585,7 +586,12 @@ export function LibraryPage() {
                         {w.title}
                       </Link>
                       <div className="work-meta">
-                        {w.authorName ?? w.authorId ?? "未知作者"}
+                        <AuthorLink
+                          provider={w.provider}
+                          authorId={w.authorId}
+                        >
+                          {w.authorName ?? w.authorId ?? "未知作者"}
+                        </AuthorLink>
                       </div>
                     </div>
                     <div className="work-actions">
@@ -616,7 +622,14 @@ export function LibraryPage() {
                       {w.title}
                     </Link>
                     <div className="work-meta">
-                      {w.authorName ?? w.authorId ?? "未知作者"} · {w.provider}
+                      <AuthorLink
+                        provider={w.provider}
+                        authorId={w.authorId}
+                      >
+                        {w.authorName ?? w.authorId ?? "未知作者"}
+                      </AuthorLink>
+                      {" · "}
+                      {w.provider}
                     </div>
                     <div className="work-meta">
                       远端收藏：{w.remoteInFavorites ? "是" : "否（本地保留）"}

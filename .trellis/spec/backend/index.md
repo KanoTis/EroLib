@@ -22,6 +22,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Live Media Library](./live-media-library.md) | Live recording storage, `live_media`, library APIs | Active |
 | [Provider Account Credentials](./provider-account-credentials.md) | Validate-on-save; `favoriteSyncEnabled` vs legacy `enabled` | Active |
 | [VOD Sync Local Media](./vod-sync-local-media.md) | Full-sync re-download; favorite-sync gate; author `listAuthorWorks` | Active |
+| [Author Page API](./author-page.md) | Author detail/avatar APIs; list `authorId` filter; lazy avatar | Active |
 
 ---
 

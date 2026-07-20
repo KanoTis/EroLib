@@ -35,6 +35,10 @@ import {
   setSessionCookie,
   verifySessionToken,
 } from "./auth/session.js";
+import {
+  getAuthorPublic,
+  resolveAuthorAvatarAbsPath,
+} from "./authors/ensure-author.js";
 import { getCookie } from "hono/cookie";
 import {
   encryptJson,
@@ -623,6 +627,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     const q = c.req.query("q")?.trim() ?? "";
     const status = c.req.query("status");
     const provider = c.req.query("provider");
+    const authorId = c.req.query("authorId")?.trim() ?? "";
     const limit = Math.min(
       200,
       Number.parseInt(c.req.query("limit") ?? "50", 10) || 50,
@@ -638,6 +643,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     }
     if (status) conditions.push(eq(works.status, status));
     if (provider) conditions.push(eq(works.provider, provider));
+    if (authorId) conditions.push(eq(works.authorId, authorId));
 
     const where =
       conditions.length === 0
@@ -1009,6 +1015,74 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, 400);
     }
+  });
+
+  app.get("/api/authors/:provider/:authorId", async (c) => {
+    const providerRaw = c.req.param("provider");
+    const authorId = decodeURIComponent(c.req.param("authorId") ?? "").trim();
+    const providerParsed = z
+      .enum(["otobanana", "koekoe", "erovoice"])
+      .safeParse(providerRaw);
+    if (!providerParsed.success) {
+      return c.json({ error: "Invalid provider" }, 400);
+    }
+    if (!authorId || authorId === "_unknown") {
+      return c.json({ error: "Invalid authorId" }, 400);
+    }
+    const provider = providerParsed.data as ProviderId;
+    try {
+      const author = await getAuthorPublic({
+        db,
+        mediaRoot: config.mediaDir,
+        provider,
+        authorId,
+        toLiveSubscription,
+        ensureOtobananaSession:
+          provider === "otobanana" ? ensureOtobananaSession : undefined,
+      });
+      return c.json(author);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, 500);
+    }
+  });
+
+  app.get("/api/authors/:provider/:authorId/avatar", async (c) => {
+    const providerRaw = c.req.param("provider");
+    const authorId = decodeURIComponent(c.req.param("authorId") ?? "").trim();
+    const providerParsed = z
+      .enum(["otobanana", "koekoe", "erovoice"])
+      .safeParse(providerRaw);
+    if (!providerParsed.success) {
+      return c.json({ error: "Invalid provider" }, 400);
+    }
+    if (!authorId || authorId === "_unknown") {
+      return c.json({ error: "Not found" }, 404);
+    }
+    const provider = providerParsed.data as ProviderId;
+    const abs = await resolveAuthorAvatarAbsPath({
+      db,
+      mediaRoot: config.mediaDir,
+      provider,
+      authorId,
+    });
+    if (!abs) return c.json({ error: "No avatar" }, 404);
+    const ext = path.extname(abs).toLowerCase();
+    const contentType =
+      ext === ".png"
+        ? "image/png"
+        : ext === ".webp"
+          ? "image/webp"
+          : ext === ".gif"
+            ? "image/gif"
+            : "image/jpeg";
+    const st = statSync(abs);
+    const stream = createReadStream(abs);
+    return c.body(Readable.toWeb(stream) as ReadableStream, 200, {
+      "Content-Length": String(st.size),
+      "Content-Type": contentType,
+      "Cache-Control": "private, max-age=3600",
+    });
   });
 
   app.post("/api/live/subscriptions", async (c) => {
@@ -1693,6 +1767,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
   app.get("/api/live/media", async (c) => {
     const q = c.req.query("q")?.trim() ?? "";
     const provider = c.req.query("provider");
+    const authorId = c.req.query("authorId")?.trim() ?? "";
     const limit = Math.min(
       200,
       Number.parseInt(c.req.query("limit") ?? "50", 10) || 50,
@@ -1707,6 +1782,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       );
     }
     if (provider) conditions.push(eq(liveMedia.provider, provider));
+    if (authorId) conditions.push(eq(liveMedia.authorId, authorId));
 
     const where =
       conditions.length === 0

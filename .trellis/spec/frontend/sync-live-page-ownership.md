@@ -45,7 +45,7 @@ Copy: product UI uses **订阅作者**, not **选定作者 / 选定录制**.
 | `syncWorks` | **同步作品** (all providers) | `runSync` → `listAuthorWorks` for that author |
 | `enabled` | **自动录制** (otobanana only; others show "—") | live-poller only |
 
-Defaults on add: `syncWorks=true`; `enabled=true` only for otabana.
+Defaults on **manual** add (SubscribeAdd, Author page, server `POST` when flags omitted): `syncWorks=false`, `enabled=false`. User enables explicitly. Auto-record (`enabled`) only applies to otobanana.
 
 ## 4. Validation & Error Matrix
 

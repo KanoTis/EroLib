@@ -13,6 +13,7 @@ import {
 } from "./components/Icons";
 import { PlayerBar } from "./components/PlayerBar";
 import { PlayerProvider, usePlayer } from "./player/PlayerContext";
+import { AuthorPage } from "./pages/AuthorPage";
 import { JobsPage } from "./pages/JobsPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { LivePage } from "./pages/LivePage";
@@ -172,6 +173,10 @@ function AuthenticatedShell({
           <Routes>
             <Route path="/" element={<LibraryPage />} />
             <Route path="/works/:provider/:workId" element={<WorkDetailPage />} />
+            <Route
+              path="/authors/:provider/:authorId"
+              element={<AuthorPage />}
+            />
             <Route path="/providers" element={<ProvidersPage />} />
             <Route path="/sync" element={<SyncPage />} />
             <Route path="/sync/add" element={<SubscribeAddPage />} />
