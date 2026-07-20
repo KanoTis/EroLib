@@ -85,6 +85,41 @@ export function liveMediaDir(
   );
 }
 
+/**
+ * Author avatar storage under MEDIA_DIR:
+ * `{mediaRoot}/{provider}/authors/{authorId}/avatar.{ext}`
+ */
+export function authorAvatarPaths(
+  mediaRoot: string,
+  provider: string,
+  authorId: string,
+): {
+  dir: string;
+  file: (ext: string) => string;
+  rel: (ext: string) => string;
+} {
+  const dir = path.join(
+    mediaRoot,
+    sanitizePathSegment(provider),
+    "authors",
+    resolveAuthorId(authorId),
+  );
+  return {
+    dir,
+    file: (ext: string) =>
+      path.join(dir, `avatar.${ext.replace(/^\./, "")}`),
+    rel: (ext: string) =>
+      path
+        .join(
+          sanitizePathSegment(provider),
+          "authors",
+          resolveAuthorId(authorId),
+          `avatar.${ext.replace(/^\./, "")}`,
+        )
+        .replace(/\\/g, "/"),
+  };
+}
+
 export async function ensureDir(dir: string): Promise<void> {
   await mkdir(dir, { recursive: true });
 }

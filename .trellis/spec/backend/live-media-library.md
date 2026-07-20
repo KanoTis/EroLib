@@ -37,7 +37,7 @@ Parallel to VOD: `works` remains VOD-only. `live_record_jobs` is the recording p
 
 ### API
 
-- `GET /api/live/media?q=&provider=&limit=&offset=` → `LiveMediaPublic[]`
+- `GET /api/live/media?q=&provider=&authorId=&limit=&offset=` → `LiveMediaPublic[]` (`authorId` optional exact match on `live_media.author_id`; same pattern on `GET /api/works`)
 - `GET /api/live/media/:provider/:roomId/audio` → audio stream (Content-Type from `audio_ext`: `audio/ogg` or `audio/wav`; Range supported)
 - `DELETE /api/live/media/:provider/:roomId` → `{ ok: true }`; missing row → 404
 - `DELETE /api/live/jobs/:id` → `{ ok: true }`; missing job → 404

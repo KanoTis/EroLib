@@ -1,4 +1,5 @@
 import type {
+  AuthorPublic,
   AuthorSearchHit,
   DownloadJobPublic,
   HealthResponse,
@@ -94,6 +95,7 @@ export const api = {
     q?: string;
     status?: string;
     provider?: string;
+    authorId?: string;
     limit?: number;
     offset?: number;
   }) => {
@@ -101,6 +103,7 @@ export const api = {
     if (params?.q) sp.set("q", params.q);
     if (params?.status) sp.set("status", params.status);
     if (params?.provider) sp.set("provider", params.provider);
+    if (params?.authorId) sp.set("authorId", params.authorId);
     if (params?.limit != null) sp.set("limit", String(params.limit));
     if (params?.offset != null) sp.set("offset", String(params.offset));
     const qs = sp.toString();
@@ -124,6 +127,12 @@ export const api = {
     request<AuthorSearchHit[]>(
       `/api/authors/search?provider=${encodeURIComponent(provider)}&q=${encodeURIComponent(q)}`,
     ),
+  getAuthor: (provider: string, authorId: string) =>
+    request<AuthorPublic>(
+      `/api/authors/${encodeURIComponent(provider)}/${encodeURIComponent(authorId)}`,
+    ),
+  authorAvatarUrl: (provider: string, authorId: string) =>
+    `/api/authors/${encodeURIComponent(provider)}/${encodeURIComponent(authorId)}/avatar`,
   addLiveSubscription: (body: {
     input?: string;
     authorId?: string;
@@ -179,12 +188,14 @@ export const api = {
   liveMedia: (params?: {
     q?: string;
     provider?: string;
+    authorId?: string;
     limit?: number;
     offset?: number;
   }) => {
     const sp = new URLSearchParams();
     if (params?.q) sp.set("q", params.q);
     if (params?.provider) sp.set("provider", params.provider);
+    if (params?.authorId) sp.set("authorId", params.authorId);
     if (params?.limit != null) sp.set("limit", String(params.limit));
     if (params?.offset != null) sp.set("offset", String(params.offset));
     const qs = sp.toString();

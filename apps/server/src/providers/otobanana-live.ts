@@ -67,6 +67,7 @@ const UserProfile = z
     id: z.string(),
     username: z.string().optional(),
     name: z.string().optional(),
+    avatar_url: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -93,6 +94,10 @@ export interface ResolvedAuthor {
   authorId: string;
   username: string | null;
   displayName: string | null;
+}
+
+export interface UserProfileInfo extends ResolvedAuthor {
+  avatarUrl: string | null;
 }
 
 export interface OnairRoom {
@@ -262,20 +267,12 @@ export async function searchAuthors(
 
   if (looksLikeUuid(raw)) {
     try {
-      const { status, json } = await fetchJson(
-        `${API_BASE}/api/users/${encodeURIComponent(raw)}`,
-        token,
-      );
-      if (status >= 200 && status < 300) {
-        const profile = UserProfile.safeParse(json);
-        if (profile.success) {
-          byId.set(profile.data.id, {
-            authorId: profile.data.id,
-            username: profile.data.username?.trim() || null,
-            displayName: profile.data.name?.trim() || null,
-          });
-        }
-      }
+      const profile = await fetchUserProfile(raw, token);
+      byId.set(profile.authorId, {
+        authorId: profile.authorId,
+        username: profile.username,
+        displayName: profile.displayName,
+      });
     } catch {
       // fall through to search
     }
@@ -300,6 +297,44 @@ export async function searchAuthors(
   return [...byId.values()].slice(0, limit);
 }
 
+function mapUserProfile(json: unknown): UserProfileInfo | null {
+  const profile = UserProfile.safeParse(json);
+  if (!profile.success) return null;
+  return {
+    authorId: profile.data.id,
+    username: profile.data.username?.trim() || null,
+    displayName: profile.data.name?.trim() || null,
+    avatarUrl: profile.data.avatar_url?.trim() || null,
+  };
+}
+
+/** Fetch otobanana user profile including avatar_url (best-effort for author page). */
+export async function fetchUserProfile(
+  authorId: string,
+  token?: string | null,
+): Promise<UserProfileInfo> {
+  const raw = authorId.trim();
+  if (!raw) throw new Error("Author id is required");
+  if (!looksLikeUuid(raw)) {
+    throw new Error(`Author UUID required for profile lookup: ${raw}`);
+  }
+  const { status, json } = await fetchJson(
+    `${API_BASE}/api/users/${encodeURIComponent(raw)}`,
+    token,
+  );
+  if (status === 404) {
+    throw new Error(`Author UUID not found: ${raw}`);
+  }
+  if (status < 200 || status >= 300) {
+    throw new Error(`Otobanana user lookup failed: HTTP ${status}`);
+  }
+  const mapped = mapUserProfile(json);
+  if (!mapped) {
+    throw new Error("Otobanana user lookup returned invalid payload");
+  }
+  return mapped;
+}
+
 export async function resolveAuthorByInput(
   input: string,
   token?: string | null,
@@ -308,24 +343,11 @@ export async function resolveAuthorByInput(
   if (!raw) throw new Error("Author input is required");
 
   if (looksLikeUuid(raw)) {
-    const { status, json } = await fetchJson(
-      `${API_BASE}/api/users/${encodeURIComponent(raw)}`,
-      token,
-    );
-    if (status === 404) {
-      throw new Error(`Author UUID not found: ${raw}`);
-    }
-    if (status < 200 || status >= 300) {
-      throw new Error(`Otobanana user lookup failed: HTTP ${status}`);
-    }
-    const profile = UserProfile.safeParse(json);
-    if (!profile.success) {
-      throw new Error("Otobanana user lookup returned invalid payload");
-    }
+    const profile = await fetchUserProfile(raw, token);
     return {
-      authorId: profile.data.id,
-      username: profile.data.username?.trim() || null,
-      displayName: profile.data.name?.trim() || null,
+      authorId: profile.authorId,
+      username: profile.username,
+      displayName: profile.displayName,
     };
   }
 

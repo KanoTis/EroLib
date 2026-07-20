@@ -1134,6 +1134,117 @@ tbody tr:last-child td {
   font-weight: 500;
 }
 
+.author-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.author-link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.author-header {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.author-hero {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-5);
+  align-items: center;
+}
+
+.author-ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 0.35rem;
+}
+
+.author-id-raw {
+  word-break: break-all;
+  opacity: 0.85;
+}
+
+.author-subscribe {
+  display: grid;
+  gap: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+
+.author-subscribe-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.author-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.section-title {
+  margin: 0 0 var(--space-3);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.author-avatar {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: rgba(248, 250, 252, 0.95);
+}
+
+.author-avatar--sm {
+  width: 40px;
+  height: 40px;
+}
+
+.author-avatar--lg {
+  width: 112px;
+  height: 112px;
+}
+
+.author-avatar.has-image {
+  background: #0b0b18;
+}
+
+.author-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.author-avatar-glyph {
+  font-size: 1.75rem;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.author-avatar--sm .author-avatar-glyph {
+  font-size: 1rem;
+}
+
+.author-avatar--lg .author-avatar-glyph {
+  font-size: 2.5rem;
+}
+
 .desc {
   margin: var(--space-4) 0 0;
   color: var(--text-secondary);
@@ -1521,6 +1632,16 @@ textarea,
 
   .detail-hero {
     grid-template-columns: 1fr;
+  }
+
+  .author-hero {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .author-avatar--lg {
+    width: 88px;
+    height: 88px;
   }
 
   .detail-cover {
