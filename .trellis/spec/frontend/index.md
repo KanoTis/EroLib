@@ -22,6 +22,7 @@ This directory contains guidelines for frontend development. Fill in each file w
 | [Type Safety](./type-safety.md) | Type patterns, validation | To fill |
 | [Global Audio Player](./global-audio-player.md) | App-wide player, Media Session, page play API | Active |
 | [Sync / Live Page Ownership](./sync-live-page-ownership.md) | Sync vs Live vs Settings ownership; subscribe UI | Active |
+| [Author Navigation UI](./author-navigation.md) | AuthorLink, AuthorPage, entry points, invalid id | Active |
 
 ---
 
