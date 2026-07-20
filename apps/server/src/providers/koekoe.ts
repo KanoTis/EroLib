@@ -571,6 +571,57 @@ export async function searchKoeKoeAuthors(
   return out;
 }
 
+/**
+ * Normalize author identity for comparison: trim + unify trip slash form.
+ * Site / UI may store trip as `◆/` or `◆_`.
+ */
+export function normalizeKoeKoeAuthorKey(id: string): string {
+  return id.trim().replace(/◆_/g, "◆/");
+}
+
+/**
+ * Search word for author-mode search.php: base display name only.
+ * Full trip identity as `word` returns empty results on the site.
+ */
+export function koeKoeAuthorSearchBase(id: string): string {
+  const norm = normalizeKoeKoeAuthorKey(id);
+  // Strip trailing trip (◆…) or ナンネット (◇ID_…) marker.
+  const stripped = norm.replace(/(?:◆[^\s]+|◇ID_\d+)\s*$/u, "").trim();
+  return stripped || norm;
+}
+
+function hasTripOrNanMarker(normalizedId: string): boolean {
+  return /(?:◆|◇ID_\d+)/u.test(normalizedId);
+}
+
+/**
+ * Whether a list-card author matches a subscription authorId.
+ * - Exact match after normalize (◆_ ↔ ◆/).
+ * - If subscription has no trip/nan marker, allow base-name match.
+ * - If subscription has trip/nan, require full identity (no same-base strangers).
+ */
+export function koeKoeAuthorMatches(
+  refAuthorId: string | null | undefined,
+  subscriptionAuthorId: string,
+): boolean {
+  const sub = normalizeKoeKoeAuthorKey(subscriptionAuthorId);
+  if (!sub) return false;
+  const ref = normalizeKoeKoeAuthorKey(refAuthorId ?? "");
+  if (!ref) return false;
+  if (ref === sub) return true;
+
+  const subHasMarker = hasTripOrNanMarker(sub);
+  if (!subHasMarker) {
+    // Subscription is base-only: accept base or base+any marker for same base.
+    const refBase = koeKoeAuthorSearchBase(ref);
+    return refBase === sub;
+  }
+
+  // Subscription has full trip/nan identity — require exact match only
+  // (do not accept other same-base authors or ambiguous base-only cards).
+  return false;
+}
+
 /** List-card rows from list.php / search.php HTML. */
 export function parseListCards(
   html: string,
@@ -604,9 +655,14 @@ export function parseListCards(
     let authorName: string | undefined;
     let authorId: string | null = authorHint?.trim() || null;
     const user = AUTHOR_IDENTITY_RE.exec(window);
-    if (user?.[1]) {
-      const base = decodeURIComponent(stripTags(user[1])).trim();
-      const marker = user[2]?.trim();
+    const entryAuth =
+      /class=["'][^"']*entry_auth[^"']*["'][^>]*>([^<]+)<\/span>\s*(◆[^\s<:：]+|◇ID_\d+)?/i.exec(
+        window,
+      );
+    const identity = user ?? entryAuth;
+    if (identity?.[1]) {
+      const base = decodeURIComponent(stripTags(identity[1])).trim();
+      const marker = identity[2]?.trim();
       if (base) {
         authorName = marker ? `${base}${marker}` : base;
         authorId = authorName;
@@ -756,38 +812,56 @@ export const koekoeProvider: Provider = {
     authorId: string,
   ): AsyncIterable<RemoteWorkRef> {
     // Author search is public (m=1); cookie optional but refreshed when present.
+    // Site returns 0 results when m=1 without g, or when word is full trip id.
     let cookie = sessionData(session).cookieHeader ?? "";
     const name = authorId.trim();
     if (!name) throw new Error("Koe-koe author name required");
 
+    const searchWord = koeKoeAuthorSearchBase(name);
+    if (!searchWord) throw new Error("Koe-koe author name required");
+
     const seen = new Set<string>();
     const MAX_PAGES = 200;
-    let pageNum = 1;
+    // g=1 female, g=2 male — must pass g with m=1 or the site returns empty.
+    const genders = ["1", "2"] as const;
 
-    for (let guard = 0; guard < MAX_PAGES; guard += 1) {
-      await sleep(REQUEST_GAP_MS);
-      const qs = new URLSearchParams({
-        word: name,
-        m: "1",
-        p: String(pageNum),
-      });
-      const page = await fetchHtml(`${BASE}/search.php?${qs.toString()}`, cookie);
-      cookie = page.cookieHeader || cookie;
-      if (page.status >= 400) {
-        throw new Error(`Koe-koe author search HTTP ${page.status}`);
+    for (const g of genders) {
+      let pageNum = 1;
+      for (let guard = 0; guard < MAX_PAGES; guard += 1) {
+        await sleep(REQUEST_GAP_MS);
+        const qs = new URLSearchParams({
+          word: searchWord,
+          m: "1",
+          g,
+          p: String(pageNum),
+        });
+        const page = await fetchHtml(
+          `${BASE}/search.php?${qs.toString()}`,
+          cookie,
+        );
+        cookie = page.cookieHeader || cookie;
+        if (page.status >= 400) {
+          throw new Error(`Koe-koe author search HTTP ${page.status}`);
+        }
+
+        const cards = parseListCards(page.html, searchWord);
+        // Empty page ends pagination. Filter may reject same-base strangers;
+        // still advance when the site has more pages so trip authors are not
+        // skipped if their works appear after other same-base rows.
+        if (cards.length === 0) break;
+
+        for (const ref of cards) {
+          if (seen.has(ref.workId)) continue;
+          const cardAuthor = ref.authorId ?? ref.authorName;
+          if (!koeKoeAuthorMatches(cardAuthor, name)) continue;
+          seen.add(ref.workId);
+          yield ref;
+        }
+
+        const next = parseNextListPage(page.html, pageNum);
+        if (next == null || next <= pageNum) break;
+        pageNum = next;
       }
-
-      let newCount = 0;
-      for (const ref of parseListCards(page.html, name)) {
-        if (seen.has(ref.workId)) continue;
-        seen.add(ref.workId);
-        newCount += 1;
-        yield ref;
-      }
-
-      const next = parseNextListPage(page.html, pageNum);
-      if (next == null || next <= pageNum || newCount === 0) break;
-      pageNum = next;
     }
 
     if (cookie) session.data.cookieHeader = cookie;

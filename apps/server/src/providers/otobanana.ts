@@ -259,6 +259,40 @@ async function resolveUserId(
   return userId;
 }
 
+/** Build user casts list URL; always pass is_adult (API defaults to non-adult). */
+export function authorCastsPageUrl(
+  uid: string,
+  limit: number,
+  offset: number,
+  isAdult: boolean,
+): string {
+  return `${API_BASE}/api/users/${encodeURIComponent(uid)}/casts?limit=${limit}&offset=${offset}&is_adult=${isAdult}`;
+}
+
+/**
+ * Ensure pagination next_page_url keeps the intended is_adult flag.
+ * API-provided links sometimes omit it; bare URL defaults to non-adult.
+ */
+export function withAuthorCastsIsAdult(
+  nextUrl: string,
+  isAdult: boolean,
+): string {
+  try {
+    const u = new URL(nextUrl, API_BASE);
+    u.searchParams.set("is_adult", String(isAdult));
+    return u.toString();
+  } catch {
+    // Relative or malformed: append / replace query conservatively
+    if (/[?&]is_adult=/i.test(nextUrl)) {
+      return nextUrl.replace(
+        /([?&]is_adult=)[^&]*/i,
+        `$1${isAdult}`,
+      );
+    }
+    return `${nextUrl}${nextUrl.includes("?") ? "&" : "?"}is_adult=${isAdult}`;
+  }
+}
+
 export const otobananaProvider: Provider = {
   id: "otobanana",
 
@@ -385,65 +419,70 @@ export const otobananaProvider: Provider = {
     if (!uid) throw new Error("Otobanana authorId required");
 
     const seen = new Set<string>();
-    // Public API: offset pagination (limit+offset). Also honor next_page_url if present.
+    // API defaults to non-adult when is_adult is omitted — R18 creators then
+    // return empty data[]. Fetch both adult flags and dedupe by workId.
     const PAGE = 50;
-    let offset = 0;
-    let url: string | null =
-      `${API_BASE}/api/users/${encodeURIComponent(uid)}/casts?limit=${PAGE}&offset=0`;
-    let guard = 0;
+    const adultFlags = [false, true] as const;
 
-    while (url && guard < 200) {
-      guard += 1;
-      const raw = await apiGet(accessToken, url);
-      // Loose page shape: data[] may be Cast or like-list items.
-      const pageObj =
-        raw && typeof raw === "object"
-          ? (raw as Record<string, unknown>)
-          : {};
-      const nextUrl =
-        (typeof pageObj.next_page_url === "string"
-          ? pageObj.next_page_url
-          : null) ??
-        (typeof pageObj.next === "string" ? pageObj.next : null);
-      const rawItems: unknown[] = Array.isArray(pageObj.casts)
-        ? pageObj.casts
-        : Array.isArray(pageObj.data)
-          ? pageObj.data
-          : Array.isArray(pageObj.results)
-            ? pageObj.results
-            : [];
+    for (const isAdult of adultFlags) {
+      let offset = 0;
+      let url: string | null = authorCastsPageUrl(uid, PAGE, 0, isAdult);
+      let guard = 0;
 
-      if (rawItems.length === 0) break;
+      while (url && guard < 200) {
+        guard += 1;
+        const raw = await apiGet(accessToken, url);
+        // Loose page shape: data[] may be Cast or like-list items.
+        const pageObj =
+          raw && typeof raw === "object"
+            ? (raw as Record<string, unknown>)
+            : {};
+        const nextUrl =
+          (typeof pageObj.next_page_url === "string"
+            ? pageObj.next_page_url
+            : null) ??
+          (typeof pageObj.next === "string" ? pageObj.next : null);
+        const rawItems: unknown[] = Array.isArray(pageObj.casts)
+          ? pageObj.casts
+          : Array.isArray(pageObj.data)
+            ? pageObj.data
+            : Array.isArray(pageObj.results)
+              ? pageObj.results
+              : [];
 
-      let newCount = 0;
-      for (const item of rawItems) {
-        let ref: RemoteWorkRef | null = null;
-        const castParsed = CastPayload.safeParse(item);
-        if (castParsed.success) {
-          ref = castToRef(castParsed.data);
+        if (rawItems.length === 0) break;
+
+        let newCount = 0;
+        for (const item of rawItems) {
+          let ref: RemoteWorkRef | null = null;
+          const castParsed = CastPayload.safeParse(item);
+          if (castParsed.success) {
+            ref = castToRef(castParsed.data);
+          }
+          if (!ref) {
+            const likeParsed = LikeListItem.safeParse(item);
+            if (likeParsed.success) ref = likeItemToRef(likeParsed.data);
+          }
+          if (!ref || seen.has(ref.workId)) continue;
+          if (!ref.authorId) {
+            ref = { ...ref, authorId: uid };
+          }
+          seen.add(ref.workId);
+          newCount += 1;
+          yield ref;
         }
-        if (!ref) {
-          const likeParsed = LikeListItem.safeParse(item);
-          if (likeParsed.success) ref = likeItemToRef(likeParsed.data);
+
+        if (nextUrl) {
+          if (newCount === 0) break;
+          // Keep is_adult on API next_page_url (may omit the param).
+          url = withAuthorCastsIsAdult(nextUrl, isAdult);
+          continue;
         }
-        if (!ref || seen.has(ref.workId)) continue;
-        if (!ref.authorId) {
-          ref = { ...ref, authorId: uid };
-        }
-        seen.add(ref.workId);
-        newCount += 1;
-        yield ref;
+
+        if (rawItems.length < PAGE || newCount === 0) break;
+        offset += PAGE;
+        url = authorCastsPageUrl(uid, PAGE, offset, isAdult);
       }
-
-      if (nextUrl) {
-        if (newCount === 0) break;
-        url = nextUrl;
-        continue;
-      }
-
-      if (rawItems.length < PAGE || newCount === 0) break;
-      offset += PAGE;
-      url = `${API_BASE}/api/users/${encodeURIComponent(uid)}/casts?limit=${PAGE}&offset=${offset}`;
     }
   },
 

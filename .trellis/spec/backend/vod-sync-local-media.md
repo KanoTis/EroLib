@@ -157,6 +157,16 @@ listAuthorWorks(session: Session, authorId: string): AsyncIterable<RemoteWorkRef
 | Author works block | requires account; **independent** of `favorite_sync_enabled` |
 | Per-author failure | set `lastError`, continue other authors / finish run |
 
+#### 3.3 Provider `listAuthorWorks` query rules
+
+Empty author lists are legal (new / inactive authors). Do **not** treat empty as error — fix provider query params when known prolific authors return empty.
+
+| Provider | Rule |
+|----------|------|
+| **otobanana** | Page `GET /api/users/{uid}/casts?limit=&offset=&is_adult=` for **both** `is_adult=false` and `is_adult=true`, dedupe by `workId`. Omitting `is_adult` defaults to non-adult and returns empty `data[]` for R18 creators. |
+| **koekoe** | Search with **base name only** (`koeKoeAuthorSearchBase`: strip `◆…` / `◇ID_…`), `m=1` **and** `g=1` then `g=2` (without `g`, author mode returns 0). Filter cards with `koeKoeAuthorMatches` so trip subscriptions do not ingest other same-base authors. Full trip string as `word` returns empty. |
+| **erovoice** | Existing author listing (no dual-flag / gender loop required for this contract). |
+
 ### 4. Validation & Error Matrix
 
 | Condition | Result |

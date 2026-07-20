@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  koeKoeAuthorMatches,
+  koeKoeAuthorSearchBase,
+  normalizeKoeKoeAuthorKey,
   parseAuthorSearchHits,
   parseDetail,
   parseListCards,
@@ -147,6 +150,42 @@ describe("koekoe parseListCards / parseNextListPage", () => {
     `;
     assert.equal(parseNextListPage(html, 1), 2);
     assert.equal(parseNextListPage(`<span>done</span>`, 1), null);
+  });
+});
+
+describe("koekoe author identity helpers", () => {
+  it("normalizes trip slash forms and trims", () => {
+    assert.equal(
+      normalizeKoeKoeAuthorKey("  黒猫◆_HV2b6TqMw  "),
+      "黒猫◆/HV2b6TqMw",
+    );
+    assert.equal(
+      normalizeKoeKoeAuthorKey("黒猫◆/HV2b6TqMw"),
+      "黒猫◆/HV2b6TqMw",
+    );
+  });
+
+  it("strips trip / nan marker for search base word", () => {
+    assert.equal(koeKoeAuthorSearchBase("黒猫◆/HV2b6TqMw"), "黒猫");
+    assert.equal(koeKoeAuthorSearchBase("黒猫◆_HV2b6TqMw"), "黒猫");
+    assert.equal(koeKoeAuthorSearchBase("なつです◇ID_76293"), "なつです");
+    assert.equal(koeKoeAuthorSearchBase("alice"), "alice");
+  });
+
+  it("matches full identity and base-only subscription rules", () => {
+    const trip = "黒猫◆/HV2b6TqMw";
+    assert.equal(koeKoeAuthorMatches("黒猫◆/HV2b6TqMw", trip), true);
+    assert.equal(koeKoeAuthorMatches("黒猫◆_HV2b6TqMw", trip), true);
+    // Same base, different trip — reject
+    assert.equal(koeKoeAuthorMatches("黒猫◆/otherTrip", trip), false);
+    // Base-only card while subscribed to trip — reject (avoid same-name bleed)
+    assert.equal(koeKoeAuthorMatches("黒猫", trip), false);
+
+    // Base-only subscription: accept base and base+marker
+    assert.equal(koeKoeAuthorMatches("alice", "alice"), true);
+    assert.equal(koeKoeAuthorMatches("alice◆trip1", "alice"), true);
+    assert.equal(koeKoeAuthorMatches("bob", "alice"), false);
+    assert.equal(koeKoeAuthorMatches(null, "alice"), false);
   });
 });
 
