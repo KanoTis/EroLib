@@ -241,3 +241,37 @@ Implemented Otobanana live discovery/polling/Playwright WAV recording, followee 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Issue #5 作者页导航
+
+**Date**: 2026-07-20
+**Task**: Issue #5 作者页导航
+**Branch**: `KanoTis/issue-5`
+
+### Summary
+
+实现点击作者名跳转作者页：AuthorPublic、列表 authorId 过滤、作者详情/头像 API（otobanana 懒加载）、AuthorLink/AuthorPage；更新 spec；PR #7 closes #5
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7118483` | (see git log) |
+| `e12c734` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
