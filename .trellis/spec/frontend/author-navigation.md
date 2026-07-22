@@ -31,7 +31,8 @@ API client:
 | Link target | `/authors/${provider}/${encodeURIComponent(authorId)}` |
 | Invalid id | no navigation (`_unknown`, empty, whitespace) |
 | Route params | use `useParams` values as-is (React Router already decodes) |
-| Page sections | avatar + displayName + provider; subscription add/toggles; VOD list; live list |
+| Page sections | avatar + displayName + provider; subscription add/toggles; view-mode toggle; VOD list; live list |
+| View mode | one page-level control (`small` / `standard` / `list`) applies to both VOD and live; shares `localStorage` key `erolib.library.viewMode` with library |
 | New subscription | `enabled: false`, `syncWorks: false` |
 | Auto-record toggle | show only when provider is otobanana (or disable for others) |
 | Pagination | page size 50 per source when listing author media (same as library) |

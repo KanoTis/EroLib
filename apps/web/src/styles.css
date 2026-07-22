@@ -1191,6 +1191,12 @@ tbody tr:last-child td {
   font-size: 0.9rem;
 }
 
+.author-view-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 1rem 0 0.5rem;
+}
+
 .section-title {
   margin: 0 0 var(--space-3);
   font-size: 1.05rem;

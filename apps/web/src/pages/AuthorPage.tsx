@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Link, useParams } from "react-router-dom";
 import type {
   AuthorPublic,
@@ -7,7 +7,13 @@ import type {
 } from "@erolib/shared";
 import { api } from "../api";
 import { AuthorAvatar } from "../components/AuthorAvatar";
-import { IconBack, IconPlay } from "../components/Icons";
+import {
+  IconBack,
+  IconPlay,
+  IconViewList,
+  IconViewSmall,
+  IconViewStandard,
+} from "../components/Icons";
 import { WorkCover } from "../components/WorkCover";
 import { usePlayer } from "../player/PlayerContext";
 
@@ -20,6 +26,51 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 const PAGE_SIZE = 50;
+
+/** Shared with LibraryPage — same localStorage key. */
+type AuthorViewMode = "small" | "standard" | "list";
+
+const VIEW_MODE_KEY = "erolib.library.viewMode";
+
+const VIEW_MODE_OPTIONS: {
+  id: AuthorViewMode;
+  label: string;
+  icon: ReactNode;
+}[] = [
+  {
+    id: "small",
+    label: "小尺寸",
+    icon: <IconViewSmall width={16} height={16} />,
+  },
+  {
+    id: "standard",
+    label: "标准尺寸",
+    icon: <IconViewStandard width={16} height={16} />,
+  },
+  {
+    id: "list",
+    label: "列表",
+    icon: <IconViewList width={16} height={16} />,
+  },
+];
+
+function readViewMode(): AuthorViewMode {
+  try {
+    const raw = localStorage.getItem(VIEW_MODE_KEY);
+    if (raw === "small" || raw === "standard" || raw === "list") return raw;
+  } catch {
+    // ignore private mode / blocked storage
+  }
+  return "standard";
+}
+
+function writeViewMode(mode: AuthorViewMode): void {
+  try {
+    localStorage.setItem(VIEW_MODE_KEY, mode);
+  } catch {
+    // ignore private mode / blocked storage
+  }
+}
 
 export function AuthorPage() {
   // React Router already decodes path params; do not decodeURIComponent again
@@ -41,6 +92,9 @@ export function AuthorPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [viewMode, setViewMode] = useState<AuthorViewMode>(() =>
+    readViewMode(),
+  );
 
   const loadAuthor = useCallback(async (): Promise<void> => {
     const data = await api.getAuthor(provider, authorId);
@@ -192,6 +246,11 @@ export function AuthorPage() {
     });
   }
 
+  function changeViewMode(mode: AuthorViewMode): void {
+    setViewMode(mode);
+    writeViewMode(mode);
+  }
+
   if (loading && !author) {
     return (
       <div className="page">
@@ -231,6 +290,15 @@ export function AuthorPage() {
 
   const displayName =
     author.displayName || author.username || author.authorId;
+
+  const isList = viewMode === "list";
+  const isSmall = viewMode === "small";
+  const listClassName =
+    viewMode === "list"
+      ? "library-list"
+      : viewMode === "small"
+        ? "library-grid library-grid--small"
+        : "library-grid";
 
   return (
     <div className="page">
@@ -326,49 +394,111 @@ export function AuthorPage() {
         </div>
       </section>
 
-      <section className="card" style={{ marginTop: "1rem" }}>
+      <div className="author-view-toolbar">
+        <div className="view-mode-toggle" role="group" aria-label="视图模式">
+          {VIEW_MODE_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              className="view-mode-btn"
+              aria-label={opt.label}
+              title={opt.label}
+              aria-pressed={viewMode === opt.id}
+              onClick={() => changeViewMode(opt.id)}
+            >
+              {opt.icon}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <section className="card" style={{ marginTop: "0.5rem" }}>
         <h2 className="section-title">点播作品</h2>
         {works.length === 0 ? (
           <p className="muted">暂无该作者的本地点播作品</p>
         ) : (
-          <div className="library-grid">
+          <div className={listClassName}>
             {works.map((w) => (
-              <article className="work-card" key={`vod:${w.id}`}>
+              <article
+                className={isList ? "work-card work-card--list" : "work-card"}
+                key={`vod:${w.id}`}
+              >
                 <WorkCover
                   provider={w.provider}
                   workId={w.workId}
                   title={w.title}
                   authorName={w.authorName}
                   coverPath={w.coverPath}
-                  size="card"
+                  size={isList ? "list" : "card"}
                   badge={
-                    <span className={`badge ${w.status}`}>
-                      {STATUS_LABEL[w.status] ?? w.status}
-                    </span>
+                    isList ? undefined : (
+                      <span className={`badge ${w.status}`}>
+                        {STATUS_LABEL[w.status] ?? w.status}
+                      </span>
+                    )
                   }
                 />
-                <div className="work-body">
-                  <Link
-                    className="work-title"
-                    to={`/works/${w.provider}/${w.workId}`}
-                  >
-                    {w.title}
-                  </Link>
-                  <div className="work-meta">
-                    {w.authorName ?? w.authorId} · {w.provider}
+                {isList ? (
+                  <div className="work-body">
+                    <div className="work-main">
+                      <Link
+                        className="work-title"
+                        to={`/works/${w.provider}/${w.workId}`}
+                      >
+                        {w.title}
+                      </Link>
+                      <div className="work-meta">
+                        {w.authorName ?? w.authorId} · {w.provider}
+                      </div>
+                    </div>
+                    <div className="work-actions">
+                      <span className="badge soft">点播</span>
+                      <span className={`badge ${w.status}`}>
+                        {STATUS_LABEL[w.status] ?? w.status}
+                      </span>
+                      {w.status === "downloaded" ? (
+                        <button type="button" onClick={() => playVod(w)}>
+                          <IconPlay width={14} height={14} />
+                          播放
+                        </button>
+                      ) : (
+                        <span className="muted small">不可播</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="work-actions">
-                    <span className="badge soft">点播</span>
-                    {w.status === "downloaded" ? (
-                      <button type="button" onClick={() => playVod(w)}>
-                        <IconPlay width={14} height={14} />
-                        播放
-                      </button>
-                    ) : (
-                      <span className="muted small">不可播</span>
-                    )}
+                ) : (
+                  <div className="work-body">
+                    <Link
+                      className="work-title"
+                      to={`/works/${w.provider}/${w.workId}`}
+                    >
+                      {w.title}
+                    </Link>
+                    <div className="work-meta">
+                      {w.authorName ?? w.authorId} · {w.provider}
+                    </div>
+                    <div className="work-actions">
+                      <span className="badge soft">点播</span>
+                      {w.status === "downloaded" ? (
+                        <button
+                          type="button"
+                          className={
+                            isSmall ? "play-icon-btn icon-btn" : undefined
+                          }
+                          aria-label={
+                            isSmall ? `播放 ${w.title}` : undefined
+                          }
+                          onClick={() => playVod(w)}
+                        >
+                          <IconPlay width={14} height={14} />
+                          {isSmall ? null : "播放"}
+                        </button>
+                      ) : (
+                        <span className="muted small">不可播</span>
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
               </article>
             ))}
           </div>
@@ -393,39 +523,78 @@ export function AuthorPage() {
         {liveItems.length === 0 ? (
           <p className="muted">暂无该作者的本地直播回放</p>
         ) : (
-          <div className="library-grid">
+          <div className={listClassName}>
             {liveItems.map((m) => {
               const title = m.title || m.roomId;
               return (
-                <article className="work-card" key={`live:${m.id}`}>
+                <article
+                  className={
+                    isList ? "work-card work-card--list" : "work-card"
+                  }
+                  key={`live:${m.id}`}
+                >
                   <WorkCover
                     provider={m.provider}
                     workId={m.roomId}
                     title={title}
                     authorName={m.authorName}
                     coverPath={null}
-                    size="card"
-                    badge={<span className="badge queued">直播</span>}
+                    size={isList ? "list" : "card"}
+                    badge={
+                      isList ? undefined : (
+                        <span className="badge queued">直播</span>
+                      )
+                    }
                   />
-                  <div className="work-body">
-                    <div className="work-title">{title}</div>
-                    <div className="work-meta">
-                      {m.authorName ?? m.authorId} · {m.provider}
+                  {isList ? (
+                    <div className="work-body">
+                      <div className="work-main">
+                        <div className="work-title">{title}</div>
+                        <div className="work-meta">
+                          {m.authorName ?? m.authorId} · {m.provider}
+                        </div>
+                        <div className="work-meta">
+                          录制完成：{m.recordedAt || m.updatedAt}
+                        </div>
+                      </div>
+                      <div className="work-actions">
+                        <span className="badge soft">直播</span>
+                        <button
+                          type="button"
+                          onClick={() => playLive(m, title)}
+                        >
+                          <IconPlay width={14} height={14} />
+                          播放
+                        </button>
+                      </div>
                     </div>
-                    <div className="work-meta">
-                      录制完成：{m.recordedAt || m.updatedAt}
+                  ) : (
+                    <div className="work-body">
+                      <div className="work-title">{title}</div>
+                      <div className="work-meta">
+                        {m.authorName ?? m.authorId} · {m.provider}
+                      </div>
+                      <div className="work-meta">
+                        录制完成：{m.recordedAt || m.updatedAt}
+                      </div>
+                      <div className="work-actions">
+                        <span className="badge soft">直播</span>
+                        <button
+                          type="button"
+                          className={
+                            isSmall ? "play-icon-btn icon-btn" : undefined
+                          }
+                          aria-label={
+                            isSmall ? `播放 ${title}` : undefined
+                          }
+                          onClick={() => playLive(m, title)}
+                        >
+                          <IconPlay width={14} height={14} />
+                          {isSmall ? null : "播放"}
+                        </button>
+                      </div>
                     </div>
-                    <div className="work-actions">
-                      <span className="badge soft">直播</span>
-                      <button
-                        type="button"
-                        onClick={() => playLive(m, title)}
-                      >
-                        <IconPlay width={14} height={14} />
-                        播放
-                      </button>
-                    </div>
-                  </div>
+                  )}
                 </article>
               );
             })}
