@@ -308,3 +308,36 @@ Implemented Otobanana live discovery/polling/Playwright WAV recording, followee 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Author page view size modes
+
+**Date**: 2026-07-22
+**Task**: Author page view size modes
+**Branch**: `master`
+
+### Summary
+
+Added library-parity small/standard/list view modes to AuthorPage, sharing erolib.library.viewMode; toggle below author header; VOD+live layouts; updated author-navigation spec. Typecheck passed.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `f19a441` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
