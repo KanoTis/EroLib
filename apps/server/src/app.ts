@@ -170,27 +170,46 @@ async function verifyProviderCredentials(
   }
 }
 
-function sourceUrlFromMeta(metaJson: string | null, provider: ProviderId, workId: string): string | null {
-  if (metaJson) {
-    try {
-      const parsed: unknown = JSON.parse(metaJson);
-      if (
-        parsed &&
-        typeof parsed === "object" &&
-        "sourceUrl" in parsed &&
-        typeof (parsed as { sourceUrl?: unknown }).sourceUrl === "string"
-      ) {
-        return (parsed as { sourceUrl: string }).sourceUrl;
-      }
-    } catch {
-      // fall through
+function parseMetaJson(metaJson: string | null): Record<string, unknown> | null {
+  if (!metaJson) return null;
+  try {
+    const parsed: unknown = JSON.parse(metaJson);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
     }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function sourceUrlFromMeta(metaJson: string | null, provider: ProviderId, workId: string): string | null {
+  const parsed = parseMetaJson(metaJson);
+  if (parsed && typeof parsed.sourceUrl === "string" && parsed.sourceUrl) {
+    return parsed.sourceUrl;
   }
   if (provider === "koekoe") {
     return `https://koe-koe.com/detail.php?n=${encodeURIComponent(workId)}`;
   }
   if (provider === "otobanana") {
     return `https://otobanana.com/general/cast/${encodeURIComponent(workId)}`;
+  }
+  return null;
+}
+
+/** Source publish time from stored WorkMetadata (not local DB createdAt). */
+function publishedAtFromMeta(metaJson: string | null): string | null {
+  const parsed = parseMetaJson(metaJson);
+  if (!parsed) return null;
+  if (typeof parsed.createdAt === "string" && parsed.createdAt.trim()) {
+    return parsed.createdAt.trim();
+  }
+  const extra = parsed.extra;
+  if (extra && typeof extra === "object" && !Array.isArray(extra)) {
+    const raw = (extra as Record<string, unknown>).postedAtRaw;
+    if (typeof raw === "string" && raw.trim()) {
+      return raw.trim().replace(/^@/, "");
+    }
   }
   return null;
 }
@@ -214,6 +233,7 @@ function toPublicWork(row: typeof works.$inferSelect): WorkPublic {
       row.provider as ProviderId,
       row.workId,
     ),
+    publishedAt: publishedAtFromMeta(row.metaJson),
     error: row.error,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
