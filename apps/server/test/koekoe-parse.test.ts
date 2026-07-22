@@ -92,6 +92,27 @@ describe("koekoe parseDetail", () => {
     assert.equal(meta.coverUrl, null);
     assert.equal(meta.durationSeconds, 1 * 60 + 46);
     assert.equal(meta.audioUrl, "https://file.koe-koe.com/sound/upload/763027.mp3");
+    // Relative label only — no absolute day; keep raw for UI fallback.
+    assert.equal(meta.createdAt, null);
+    assert.equal(meta.extra?.postedAtRaw, "@1日前");
+  });
+
+  it("parses absolute @YY/M/D publish date from detail meta", () => {
+    const html = `
+      <h2>ちくばんちくびをかりかりしながらひとりえっち</h2>
+      <audio><source src="//file.koe-koe.com/sound/upload/575558.mp3" type="audio/mp3"></audio>
+      <div class="desc detail">
+        <p><a href="search.php?word=黒猫&g=1&m=1"><span class="user_name">黒猫</span></a>◆/HV2b6TqMw : body</p>
+        <p class="meta detail">
+          <span class="meta_item"><a href="list.php?g=1&g2=2">オナ声</a></span>
+          <span class="meta_item"><span class="metaIcon_up">@24/10/5</span></span>
+        </p>
+      </div>
+    `;
+    const meta = parseDetail(html, "575558");
+    assert.equal(meta.title, "ちくばんちくびをかりかりしながらひとりえっち");
+    assert.equal(meta.createdAt, "2024-10-05");
+    assert.equal(meta.extra?.postedAtRaw, "@24/10/5");
   });
 
   it("includes ナンネット ID marker in author identity", () => {
@@ -139,6 +160,74 @@ describe("koekoe parseListCards / parseNextListPage", () => {
     );
     assert.equal(cards[0]?.provider, "koekoe");
     assert.ok(cards.every((c) => c.authorId));
+  });
+
+  it("uses desc_auth_title text after colon, not duration/meta chrome", () => {
+    // Shape from list.php / search.php (issue #12: title swallowed meta).
+    const html = `
+      <div class="content">
+        <a href="detail.php?n=575558" title="「黒猫(女性)/ちくばんちくびをかりかりしながらひとりえっち」の投稿">
+          <div class="content-inner">
+            <div class="icon icon_female">
+              <div class="audioTime audioTime_female">4分</div>
+            </div>
+            <div class="desc">
+              <p class="desc_auth_title"><span class="entry_auth">黒猫</span>◆/HV2b6TqMw : ちくばんちくびをかりかりしながらひとりえっち</p>
+              <p class="meta addition">
+                <span class="meta_item">コメ : 2</span>
+                <span class="meta_item">いいね : 22</span>
+                <span class="meta_item"><span class="metaIcon_up">@24/10/5</span></span>
+              </p>
+            </div>
+          </div>
+        </a>
+      </div>
+      <div class="content">
+        <a href="detail.php?n=765171" title="「ゆめな(女性)/1000円でえっちなこと何でもします♡」の投稿">
+          <div class="content-inner">
+            <div class="icon icon_female">
+              <div class="audioTime audioTime_female">44秒</div>
+            </div>
+            <div class="desc">
+              <p class="desc_auth_title"><span class="entry_auth">ゆめな</span> : 1000円でえっちなこと何でもします♡</p>
+              <p class="meta addition">
+                <span class="meta_item">コメ : 0</span>
+                <span class="meta_item">いいね : 0</span>
+                <span class="meta_item"><span class="metaIcon_up">@16分前</span></span>
+              </p>
+            </div>
+          </div>
+        </a>
+      </div>
+    `;
+    const cards = parseListCards(html);
+    assert.equal(cards.length, 2);
+
+    const issue = cards.find((c) => c.workId === "575558");
+    assert.ok(issue);
+    assert.equal(issue?.title, "ちくばんちくびをかりかりしながらひとりえっち");
+    assert.equal(issue?.authorName, "黒猫◆/HV2b6TqMw");
+    assert.equal(issue?.authorId, "黒猫◆/HV2b6TqMw");
+    assert.ok(issue?.title && !issue.title.includes("コメ"));
+    assert.ok(issue?.title && !issue.title.includes("いいね"));
+    assert.ok(issue?.title && !/^4分/.test(issue.title));
+
+    const second = cards.find((c) => c.workId === "765171");
+    assert.equal(second?.title, "1000円でえっちなこと何でもします♡");
+    assert.equal(second?.authorName, "ゆめな");
+  });
+
+  it("falls back to anchor title attribute when desc_auth_title missing", () => {
+    const html = `
+      <a href="detail.php?n=1003" title="「alice(女性)/フォールバックタイトル」の投稿">
+        <div class="audioTime">1分</div>
+        <span class="entry_auth">alice</span>
+      </a>
+    `;
+    const cards = parseListCards(html);
+    assert.equal(cards[0]?.workId, "1003");
+    assert.equal(cards[0]?.title, "フォールバックタイトル");
+    assert.equal(cards[0]?.authorName, "alice");
   });
 
   it("finds next page from pager links", () => {

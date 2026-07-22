@@ -250,6 +250,56 @@ function pickDescription(html: string): string | undefined {
 const AUTHOR_IDENTITY_RE =
   /<span[^>]*class=["'][^"']*user_name[^"']*["'][^>]*>([^<]+)<\/span>\s*(?:<\/a>)?\s*(◆[^\s<:：]+|◇ID_\d+)?/i;
 
+/**
+ * Site post time from detail/list meta: absolute `@YY/M/D` or relative
+ * `@N分前` / `@N時間前` / `@N日前`. Prefer the main desc.detail block.
+ */
+function pickPublishedAt(html: string): {
+  createdAt: string | null;
+  postedAtRaw: string | null;
+} {
+  const scopes: string[] = [];
+  const detail = findDescDetailBlock(html);
+  if (detail) scopes.push(detail);
+  const voiceIdx = html.search(/id=["']voice["']|id=["']text["']/i);
+  if (voiceIdx >= 0) scopes.push(html.slice(voiceIdx, voiceIdx + 4000));
+  scopes.push(html);
+
+  let raw: string | null = null;
+  for (const scope of scopes) {
+    const m =
+      /metaIcon_up[^>]*>([^<]+)/i.exec(scope) ??
+      /class=["'][^"']*meta_item[^"']*["'][^>]*>\s*(@[^<\s]+)/i.exec(scope);
+    if (!m?.[1]) continue;
+    const text = stripTags(m[1]).trim();
+    if (!text) continue;
+    raw = text.startsWith("@") ? text : `@${text}`;
+    break;
+  }
+  if (!raw) return { createdAt: null, postedAtRaw: null };
+
+  const absolute = /^@?(?:(\d{2}|\d{4})\/(\d{1,2})\/(\d{1,2}))$/.exec(raw);
+  if (absolute) {
+    let year = Number.parseInt(absolute[1] ?? "0", 10);
+    if (year < 100) year += 2000;
+    const month = Number.parseInt(absolute[2] ?? "0", 10);
+    const day = Number.parseInt(absolute[3] ?? "0", 10);
+    if (
+      year >= 2000 &&
+      year <= 2100 &&
+      month >= 1 &&
+      month <= 12 &&
+      day >= 1 &&
+      day <= 31
+    ) {
+      const iso = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      return { createdAt: iso, postedAtRaw: raw };
+    }
+  }
+
+  return { createdAt: null, postedAtRaw: raw };
+}
+
 function pickAuthor(html: string): {
   authorName?: string;
   authorId: string | null;
@@ -334,11 +384,13 @@ export function parseDetail(html: string, workId: string): WorkMetadata {
   if (iconMatch?.[1]) gender = iconMatch[1].toLowerCase();
 
   const description = pickDescription(html);
+  const published = pickPublishedAt(html);
 
   const extra: Record<string, unknown> = {};
   if (gender) extra.gender = gender;
   if (author.trip) extra.trip = author.trip;
   if (author.nanId) extra.nanId = author.nanId;
+  if (published.postedAtRaw) extra.postedAtRaw = published.postedAtRaw;
 
   return {
     provider: "koekoe",
@@ -351,6 +403,7 @@ export function parseDetail(html: string, workId: string): WorkMetadata {
     audioUrl,
     coverUrl: null,
     sourceUrl: detailUrl(workId),
+    createdAt: published.createdAt,
     extra,
   };
 }
@@ -622,6 +675,74 @@ export function koeKoeAuthorMatches(
   return false;
 }
 
+/**
+ * Title for a list.php / search.php card.
+ * Real cards wrap duration + author + title + コメ/いいね inside one <a>;
+ * never use the full stripped anchor text as the title.
+ */
+function pickListCardTitle(window: string, workId: string): string | undefined {
+  // 1. <p class="desc_auth_title">…entry_auth… : {title}</p>
+  const authTitle =
+    /class=["'][^"']*desc_auth_title[^"']*["'][^>]*>([\s\S]*?)<\/p>/i.exec(
+      window,
+    );
+  if (authTitle?.[1]) {
+    const text = stripTags(authTitle[1]);
+    if (/[:：]/u.test(text)) {
+      const afterColon = text.replace(/^[\s\S]*?[:：]\s*/u, "").trim();
+      if (afterColon && !isNoiseTitle(afterColon) && afterColon !== workId) {
+        return afterColon;
+      }
+    }
+  }
+
+  // 2. <a title="「author(gender)/title」の投稿">
+  const attr =
+    /\btitle=["']「([^"']+)」の投稿["']/i.exec(window) ??
+    /\btitle=["']([^"']+)["']/i.exec(window);
+  if (attr?.[1]) {
+    let t = decodeEntities(attr[1]).trim();
+    // 「黒猫(女性)/実タイトル」 or bare 「タイトル」
+    const gendered = /^[\s\S]*?\((?:女性|男性|カップル)\)\/([\s\S]+)$/u.exec(t);
+    if (gendered?.[1]) {
+      t = gendered[1].trim();
+    } else {
+      const slash = t.indexOf("/");
+      if (slash >= 0) t = t.slice(slash + 1).trim();
+    }
+    t = t.replace(/の投稿\s*$/u, "").trim();
+    if (t && !isNoiseTitle(t) && t !== workId) return t;
+  }
+
+  // 3. Rare: h2 near the link (opening tag may sit just before href)
+  const h2 =
+    /<h2[^>]*>([\s\S]*?)<\/h2>/i.exec(window) ??
+    />([\s\S]*?)<\/h2>/i.exec(window);
+  if (h2?.[1]) {
+    // Prefer text of an inner link if present, else whole h2 body
+    const innerA = /<a\b[^>]*>([\s\S]*?)<\/a>/i.exec(h2[1]);
+    const t = stripTags(innerA?.[1] ?? h2[1]);
+    if (t && !isNoiseTitle(t) && t !== workId) return t;
+  }
+
+  // 4. Short plain-text anchor only — never the full list-card blob
+  const titleLink =
+    /detail\.php\?n=\d+[^"']*["'][^>]*>([\s\S]*?)<\/a>/i.exec(window);
+  if (titleLink?.[1]) {
+    const inner = titleLink[1];
+    if (
+      !/desc_auth_title|audioTime|meta_item|entry_auth|コメ\s*:|いいね\s*:/i.test(
+        inner,
+      )
+    ) {
+      const t = stripTags(inner);
+      if (t && t.length <= 80 && !isNoiseTitle(t) && t !== workId) return t;
+    }
+  }
+
+  return undefined;
+}
+
 /** List-card rows from list.php / search.php HTML. */
 export function parseListCards(
   html: string,
@@ -630,6 +751,8 @@ export function parseListCards(
   const refs: RemoteWorkRef[] = [];
   const seen = new Set<string>();
   // Split on detail links; pull nearby title/author when present.
+  // Card body (desc_auth_title / meta) sits after href — use a forward window
+  // so the previous card's entry_auth is not preferred.
   const re = /detail\.php\?n=(\d+)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html)) !== null) {
@@ -637,21 +760,8 @@ export function parseListCards(
     if (!id || seen.has(id)) continue;
     seen.add(id);
     const idx = m.index;
-    const window = html.slice(Math.max(0, idx - 400), idx + 800);
-    let title: string | undefined;
-    const h2 = /<h2[^>]*>([\s\S]*?)<\/h2>/i.exec(window);
-    if (h2?.[1]) {
-      const t = stripTags(h2[1]);
-      if (t && !isNoiseTitle(t)) title = t;
-    }
-    if (!title) {
-      const titleLink =
-        /detail\.php\?n=\d+[^"']*["'][^>]*>([\s\S]*?)<\/a>/i.exec(window);
-      if (titleLink?.[1]) {
-        const t = stripTags(titleLink[1]);
-        if (t && !isNoiseTitle(t) && t !== id) title = t;
-      }
-    }
+    const window = html.slice(idx, Math.min(html.length, idx + 1200));
+    const title = pickListCardTitle(window, id);
     let authorName: string | undefined;
     let authorId: string | null = authorHint?.trim() || null;
     const user = AUTHOR_IDENTITY_RE.exec(window);

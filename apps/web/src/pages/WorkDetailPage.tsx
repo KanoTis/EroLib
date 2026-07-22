@@ -119,6 +119,16 @@ export function WorkDetailPage() {
                 </dd>
               </div>
               <div>
+                <dt>发布日期</dt>
+                <dd>
+                  {work.publishedAt
+                    ? /^\d{4}-\d{2}-\d{2}/.test(work.publishedAt)
+                      ? work.publishedAt.slice(0, 10)
+                      : work.publishedAt
+                    : "—"}
+                </dd>
+              </div>
+              <div>
                 <dt>Provider</dt>
                 <dd>{work.provider}</dd>
               </div>

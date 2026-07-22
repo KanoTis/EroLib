@@ -109,6 +109,12 @@ export interface WorkPublic {
   audioExt: string | null;
   coverPath: string | null;
   sourceUrl: string | null;
+  /**
+   * Source-site publish time when known.
+   * Absolute dates are ISO `YYYY-MM-DD`; relative site labels (e.g. `9時間前`)
+   * are stored as-is when no absolute day is available.
+   */
+  publishedAt: string | null;
   error: string | null;
   createdAt: string;
   updatedAt: string;
