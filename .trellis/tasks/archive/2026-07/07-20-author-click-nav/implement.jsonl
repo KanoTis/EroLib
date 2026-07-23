@@ -1,7 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "Backend guideline entry and active live/VOD specs"}
-{"file": ".trellis/spec/backend/live-media-library.md", "reason": "Live media list/API patterns when filtering by author"}
-{"file": ".trellis/spec/backend/vod-sync-local-media.md", "reason": "Author works / listAuthorWorks context for local VOD"}
-{"file": ".trellis/spec/frontend/index.md", "reason": "Frontend guideline entry"}
-{"file": ".trellis/spec/frontend/sync-live-page-ownership.md", "reason": "Subscribe UI ownership; author page reuses subscription APIs"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Shared DTO + API + UI contract alignment"}
-{"file": ".trellis/tasks/07-20-author-click-nav/research/codebase-gaps.md", "reason": "Issue #5 gap analysis and reuse points"}

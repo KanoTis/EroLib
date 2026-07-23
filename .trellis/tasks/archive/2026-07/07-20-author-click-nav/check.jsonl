@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend quality bar"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Frontend quality bar"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "Shared types and UI typing"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "AuthorLink/subscription reuse checks"}
-{"file": ".trellis/tasks/07-20-author-click-nav/prd.md", "reason": "Acceptance criteria AC1–AC7"}
-{"file": ".trellis/tasks/07-20-author-click-nav/design.md", "reason": "Contract and boundary review"}
