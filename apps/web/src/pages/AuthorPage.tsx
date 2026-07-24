@@ -79,7 +79,7 @@ export function AuthorPage() {
     useParams();
   const provider = providerParam;
   const authorId = authorIdParam;
-  const { play } = usePlayer();
+  const { playFromList } = usePlayer();
 
   const [author, setAuthor] = useState<AuthorPublic | null>(null);
   const [works, setWorks] = useState<WorkPublic[]>([]);
@@ -225,25 +225,39 @@ export function AuthorPage() {
   }
 
   function playVod(w: WorkPublic): void {
-    play({
-      id: `vod:${w.provider}:${w.workId}`,
-      kind: "vod",
-      title: w.title,
-      subtitle: w.authorName ?? w.authorId ?? undefined,
-      src: api.audioUrl(w.provider, w.workId),
-      artworkUrl: w.coverPath ? api.coverUrl(w.provider, w.workId) : null,
-    });
+    const playable = works
+      .filter((item) => item.status === "downloaded")
+      .map((item) => ({
+        id: `vod:${item.provider}:${item.workId}`,
+        kind: "vod" as const,
+        title: item.title,
+        subtitle: item.authorName ?? item.authorId ?? undefined,
+        src: api.audioUrl(item.provider, item.workId),
+        artworkUrl: item.coverPath
+          ? api.coverUrl(item.provider, item.workId)
+          : null,
+      }));
+    const trackId = `vod:${w.provider}:${w.workId}`;
+    const idx = playable.findIndex((t) => t.id === trackId);
+    if (idx < 0) return;
+    playFromList(playable, idx);
   }
 
   function playLive(m: LiveMediaPublic, title: string): void {
-    play({
-      id: `live:${m.provider}:${m.roomId}`,
-      kind: "live",
-      title,
-      subtitle: m.authorName ?? m.authorId ?? undefined,
-      src: api.liveAudioUrl(m.provider, m.roomId),
-      artworkUrl: null,
-    });
+    const playable = liveItems.map((item) => ({
+      id: `live:${item.provider}:${item.roomId}`,
+      kind: "live" as const,
+      title: item.title || item.roomId,
+      subtitle: item.authorName ?? item.authorId ?? undefined,
+      src: api.liveAudioUrl(item.provider, item.roomId),
+      artworkUrl: null as string | null,
+    }));
+    const trackId = `live:${m.provider}:${m.roomId}`;
+    const idx = playable.findIndex((t) => t.id === trackId);
+    if (idx < 0) return;
+    const next = [...playable];
+    next[idx] = { ...next[idx]!, title };
+    playFromList(next, idx);
   }
 
   function changeViewMode(mode: AuthorViewMode): void {

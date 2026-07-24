@@ -11,7 +11,7 @@ import {
   IconSettings,
   IconWave,
 } from "./components/Icons";
-import { PlayerBar } from "./components/PlayerBar";
+import { PlayerHost } from "./components/player/PlayerHost";
 import { PlayerProvider, usePlayer } from "./player/PlayerContext";
 import { AuthorPage } from "./pages/AuthorPage";
 import { JobsPage } from "./pages/JobsPage";
@@ -188,7 +188,7 @@ function AuthenticatedShell({
         </main>
       </div>
 
-      <PlayerBar />
+      <PlayerHost />
     </div>
   );
 }

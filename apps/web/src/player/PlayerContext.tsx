@@ -24,7 +24,14 @@ export type PlayerContextValue = {
   volume: number;
   muted: boolean;
   error: string | null;
+  queue: PlayableTrack[];
+  queueIndex: number;
+  hasPrev: boolean;
+  hasNext: boolean;
   play: (track: PlayableTrack) => void;
+  playFromList: (tracks: PlayableTrack[], startIndex: number) => void;
+  next: () => void;
+  prev: () => void;
   toggle: () => void;
   seek: (time: number) => void;
   setVolume: (v: number) => void;
@@ -54,6 +61,8 @@ function audioErrorMessage(audio: HTMLAudioElement): string {
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const trackRef = useRef<PlayableTrack | null>(null);
+  const queueRef = useRef<PlayableTrack[]>([]);
+  const queueIndexRef = useRef(-1);
   const seekQuietUntilRef = useRef(0);
 
   const [track, setTrack] = useState<PlayableTrack | null>(null);
@@ -63,8 +72,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [volume, setVolumeState] = useState(1);
   const [muted, setMutedState] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queue, setQueue] = useState<PlayableTrack[]>([]);
+  const [queueIndex, setQueueIndex] = useState(-1);
 
   trackRef.current = track;
+  queueRef.current = queue;
+  queueIndexRef.current = queueIndex;
 
   const seek = useCallback((time: number) => {
     const audio = audioRef.current;
@@ -88,42 +101,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const toggle = useCallback(() => {
-    const audio = audioRef.current;
-    if (!audio || !trackRef.current) return;
-    if (audio.paused) {
-      setError(null);
-      setStatus("loading");
-      if (audio.ended) {
-        audio.currentTime = 0;
-        setCurrentTime(0);
-      }
-      void audio.play().catch(() => {
-        setStatus("error");
-        setError("无法播放");
-      });
-    } else {
-      audio.pause();
-    }
-  }, []);
-
-  const stop = useCallback(() => {
-    const audio = audioRef.current;
-    if (audio) {
-      audio.pause();
-      audio.removeAttribute("src");
-      audio.load();
-    }
-    setTrack(null);
-    trackRef.current = null;
-    setStatus("idle");
-    setCurrentTime(0);
-    setDuration(0);
-    setError(null);
-    clearMediaSession();
-  }, []);
-
-  const play = useCallback((next: PlayableTrack) => {
+  const loadAndPlay = useCallback((next: PlayableTrack) => {
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -158,6 +136,89 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const play = useCallback(
+    (next: PlayableTrack) => {
+      setQueue([]);
+      setQueueIndex(-1);
+      queueRef.current = [];
+      queueIndexRef.current = -1;
+      loadAndPlay(next);
+    },
+    [loadAndPlay],
+  );
+
+  const playFromList = useCallback(
+    (tracks: PlayableTrack[], startIndex: number) => {
+      if (tracks.length === 0) return;
+      const idx = Math.max(0, Math.min(startIndex, tracks.length - 1));
+      setQueue(tracks);
+      setQueueIndex(idx);
+      queueRef.current = tracks;
+      queueIndexRef.current = idx;
+      loadAndPlay(tracks[idx]!);
+    },
+    [loadAndPlay],
+  );
+
+  const next = useCallback(() => {
+    const q = queueRef.current;
+    const idx = queueIndexRef.current;
+    if (idx < 0 || idx >= q.length - 1) return;
+    const nextIdx = idx + 1;
+    setQueueIndex(nextIdx);
+    queueIndexRef.current = nextIdx;
+    loadAndPlay(q[nextIdx]!);
+  }, [loadAndPlay]);
+
+  const prev = useCallback(() => {
+    const q = queueRef.current;
+    const idx = queueIndexRef.current;
+    if (idx <= 0 || q.length === 0) return;
+    const prevIdx = idx - 1;
+    setQueueIndex(prevIdx);
+    queueIndexRef.current = prevIdx;
+    loadAndPlay(q[prevIdx]!);
+  }, [loadAndPlay]);
+
+  const toggle = useCallback(() => {
+    const audio = audioRef.current;
+    if (!audio || !trackRef.current) return;
+    if (audio.paused) {
+      setError(null);
+      setStatus("loading");
+      if (audio.ended) {
+        audio.currentTime = 0;
+        setCurrentTime(0);
+      }
+      void audio.play().catch(() => {
+        setStatus("error");
+        setError("无法播放");
+      });
+    } else {
+      audio.pause();
+    }
+  }, []);
+
+  const stop = useCallback(() => {
+    const audio = audioRef.current;
+    if (audio) {
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+    }
+    setTrack(null);
+    trackRef.current = null;
+    setQueue([]);
+    setQueueIndex(-1);
+    queueRef.current = [];
+    queueIndexRef.current = -1;
+    setStatus("idle");
+    setCurrentTime(0);
+    setDuration(0);
+    setError(null);
+    clearMediaSession();
+  }, []);
+
   const setVolume = useCallback((v: number) => {
     const audio = audioRef.current;
     const clamped = Math.max(0, Math.min(1, v));
@@ -170,6 +231,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setMutedState(m);
     if (audio) audio.muted = m;
   }, []);
+
+  const hasPrev = queueIndex > 0;
+  const hasNext = queueIndex >= 0 && queueIndex < queue.length - 1;
+
+  const loadAndPlayRef = useRef(loadAndPlay);
+  loadAndPlayRef.current = loadAndPlay;
 
   // Wire audio element events once
   useEffect(() => {
@@ -247,6 +314,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setMediaSessionPlaybackState("playing");
     };
     const onEnded = () => {
+      const q = queueRef.current;
+      const idx = queueIndexRef.current;
+      if (idx >= 0 && idx < q.length - 1) {
+        const nextIdx = idx + 1;
+        setQueueIndex(nextIdx);
+        queueIndexRef.current = nextIdx;
+        const nextTrack = q[nextIdx];
+        if (nextTrack) {
+          loadAndPlayRef.current(nextTrack);
+          return;
+        }
+      }
       setStatus("paused");
       setCurrentTime(audio.currentTime);
       setMediaSessionPlaybackState("paused");
@@ -315,12 +394,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       seekTo: (time) => {
         seek(time);
       },
+      prev: () => {
+        prev();
+      },
+      next: () => {
+        next();
+      },
     });
 
     return () => {
       // Do not clear on every track swap mid-update; stop() clears explicitly.
     };
-  }, [track, seek]);
+  }, [track, seek, prev, next]);
 
   // Position state for lock screen scrubbing
   useEffect(() => {
@@ -345,7 +430,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       volume,
       muted,
       error,
+      queue,
+      queueIndex,
+      hasPrev,
+      hasNext,
       play,
+      playFromList,
+      next,
+      prev,
       toggle,
       seek,
       setVolume,
@@ -360,7 +452,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       volume,
       muted,
       error,
+      queue,
+      queueIndex,
+      hasPrev,
+      hasNext,
       play,
+      playFromList,
+      next,
+      prev,
       toggle,
       seek,
       setVolume,

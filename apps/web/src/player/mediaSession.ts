@@ -4,6 +4,8 @@ type MediaSessionHandlers = {
   play: () => void;
   pause: () => void;
   seekTo: (time: number) => void;
+  prev?: () => void;
+  next?: () => void;
 };
 
 function supportsMediaSession(): boolean {
@@ -55,6 +57,22 @@ export function setMediaSession(
         handlers.seekTo(details.seekTime);
       }
     });
+    navigator.mediaSession.setActionHandler(
+      "previoustrack",
+      handlers.prev
+        ? () => {
+            handlers.prev?.();
+          }
+        : null,
+    );
+    navigator.mediaSession.setActionHandler(
+      "nexttrack",
+      handlers.next
+        ? () => {
+            handlers.next?.();
+          }
+        : null,
+    );
   } catch {
     // Some browsers reject certain action handlers.
   }

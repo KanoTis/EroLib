@@ -12,7 +12,7 @@ import { IconPlay, IconRefresh } from "../components/Icons";
 import { usePlayer } from "../player/PlayerContext";
 
 export function LivePage() {
-  const { play } = usePlayer();
+  const { playFromList } = usePlayer();
   const [followees, setFollowees] = useState<LiveOnairPublic[]>([]);
   const [history, setHistory] = useState<LiveFolloweeAuthorPublic[]>([]);
   const [historyMeta, setHistoryMeta] = useState<
@@ -402,22 +402,34 @@ export function LivePage() {
                             <>
                               <button
                                 type="button"
-                                onClick={() =>
-                                  play({
-                                    id: `live:${j.provider}:${j.roomId}`,
-                                    kind: "live",
-                                    title: j.title || j.roomId,
-                                    subtitle:
-                                      j.authorDisplayName ||
-                                      j.authorUsername ||
-                                      j.authorId ||
-                                      undefined,
-                                    src: api.liveAudioUrl(
-                                      j.provider,
-                                      j.roomId,
-                                    ),
-                                  })
-                                }
+                                onClick={() => {
+                                  const playable = jobs
+                                    .filter(
+                                      (item) =>
+                                        item.state === "completed" &&
+                                        Boolean(item.mediaRelPath),
+                                    )
+                                    .map((item) => ({
+                                      id: `live:${item.provider}:${item.roomId}`,
+                                      kind: "live" as const,
+                                      title: item.title || item.roomId,
+                                      subtitle:
+                                        item.authorDisplayName ||
+                                        item.authorUsername ||
+                                        item.authorId ||
+                                        undefined,
+                                      src: api.liveAudioUrl(
+                                        item.provider,
+                                        item.roomId,
+                                      ),
+                                    }));
+                                  const trackId = `live:${j.provider}:${j.roomId}`;
+                                  const idx = playable.findIndex(
+                                    (t) => t.id === trackId,
+                                  );
+                                  if (idx < 0) return;
+                                  playFromList(playable, idx);
+                                }}
                               >
                                 <IconPlay width={14} height={14} />
                                 播放

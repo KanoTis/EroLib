@@ -181,7 +181,7 @@ async function fetchUpToCount<T>(
 }
 
 export function LibraryPage() {
-  const { play } = usePlayer();
+  const { playFromList } = usePlayer();
   const [searchParams, setSearchParams] = useSearchParams();
   const restoreRef = useRef(readScrollRestore());
   const needsRestoreRef = useRef(restoreRef.current != null);
@@ -223,26 +223,57 @@ export function LibraryPage() {
     (wantVod && vodHasMore) || (wantLive && liveHasMore);
 
   function playVod(w: WorkPublic): void {
-    const track: PlayableTrack = {
-      id: `vod:${w.provider}:${w.workId}`,
-      kind: "vod",
-      title: w.title,
-      subtitle: w.authorName ?? w.authorId ?? undefined,
-      src: api.audioUrl(w.provider, w.workId),
-      artworkUrl: w.coverPath ? api.coverUrl(w.provider, w.workId) : null,
-    };
-    play(track);
+    const playable = works
+      .filter((item) => item.status === "downloaded")
+      .map(
+        (item): PlayableTrack => ({
+          id: `vod:${item.provider}:${item.workId}`,
+          kind: "vod",
+          title: item.title,
+          subtitle: item.authorName ?? item.authorId ?? undefined,
+          src: api.audioUrl(item.provider, item.workId),
+          artworkUrl: item.coverPath
+            ? api.coverUrl(item.provider, item.workId)
+            : null,
+        }),
+      );
+    const trackId = `vod:${w.provider}:${w.workId}`;
+    const idx = playable.findIndex((t) => t.id === trackId);
+    if (idx < 0) return;
+    playFromList(playable, idx);
   }
 
   function playLive(m: LiveMediaPublic, title: string): void {
-    const track: PlayableTrack = {
-      id: `live:${m.provider}:${m.roomId}`,
-      kind: "live",
-      title,
-      subtitle: m.authorName ?? m.authorId ?? undefined,
-      src: api.liveAudioUrl(m.provider, m.roomId),
-    };
-    play(track);
+    const playable = liveItems.map(
+      (item): PlayableTrack => ({
+        id: `live:${item.provider}:${item.roomId}`,
+        kind: "live",
+        title: item.title || item.roomId,
+        subtitle: item.authorName ?? item.authorId ?? undefined,
+        src: api.liveAudioUrl(item.provider, item.roomId),
+      }),
+    );
+    const trackId = `live:${m.provider}:${m.roomId}`;
+    const idx = playable.findIndex((t) => t.id === trackId);
+    if (idx < 0) {
+      playFromList(
+        [
+          {
+            id: trackId,
+            kind: "live",
+            title,
+            subtitle: m.authorName ?? m.authorId ?? undefined,
+            src: api.liveAudioUrl(m.provider, m.roomId),
+          },
+        ],
+        0,
+      );
+      return;
+    }
+    // Prefer the clicked title if present
+    const next = [...playable];
+    next[idx] = { ...next[idx]!, title };
+    playFromList(next, idx);
   }
 
   async function deleteLive(m: LiveMediaPublic): Promise<void> {
