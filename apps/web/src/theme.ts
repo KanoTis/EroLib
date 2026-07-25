@@ -32,7 +32,7 @@ const sharedTypography = {
 
 const sharedComponents = {
   MuiButton: {
-    defaultProps: { disableElevation: true, color: "primary" },
+    defaultProps: { disableElevation: true },
     styleOverrides: {
       root: {
         minHeight: 44,
@@ -42,16 +42,6 @@ const sharedComponents = {
         "&:active": { transform: "scale(0.97)" },
       },
       contained: {
-        backgroundColor: ASMR.primary,
-        color: "#fff",
-        "&:hover": { backgroundColor: ASMR.primaryDark },
-      },
-      containedPrimary: {
-        backgroundColor: ASMR.primary,
-        color: "#fff",
-        "&:hover": { backgroundColor: ASMR.primaryDark },
-      },
-      containedSecondary: {
         backgroundColor: ASMR.primary,
         color: "#fff",
         "&:hover": { backgroundColor: ASMR.primaryDark },
@@ -214,7 +204,7 @@ const light = createTheme({
   components: {
     ...sharedComponents,
     MuiButton: {
-      defaultProps: { disableElevation: true, color: "primary" },
+      defaultProps: { disableElevation: true },
       styleOverrides: {
         root: {
           minHeight: 44,
@@ -224,16 +214,6 @@ const light = createTheme({
           "&:active": { transform: "scale(0.97)" },
         },
         contained: {
-          backgroundColor: ASMR.primary,
-          color: "#fff",
-          "&:hover": { backgroundColor: ASMR.primaryDark },
-        },
-        containedPrimary: {
-          backgroundColor: ASMR.primary,
-          color: "#fff",
-          "&:hover": { backgroundColor: ASMR.primaryDark },
-        },
-        containedSecondary: {
           backgroundColor: ASMR.primary,
           color: "#fff",
           "&:hover": { backgroundColor: ASMR.primaryDark },
