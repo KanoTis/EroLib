@@ -4,9 +4,10 @@ import {
   Box, Card, CardContent, CardActions, Typography, Button, Alert, Chip, CircularProgress,
   ToggleButtonGroup, ToggleButton,
 } from "@mui/material";
-import { ArrowBack, PlayArrow, GridView, ViewList, ViewModule } from "@mui/icons-material";
+import { ArrowBack, OpenInNew, PlayArrow, GridView, ViewList, ViewModule } from "@mui/icons-material";
 import type { AuthorPublic, LiveMediaPublic, WorkPublic } from "@erolib/shared";
 import { api } from "../api";
+import { authorSourceUrl } from "../authorSourceUrl";
 import { AuthorAvatar } from "../components/AuthorAvatar";
 import { CoverImage } from "../components/CoverImage";
 import { AuthorLink } from "../components/AuthorLink";
@@ -98,6 +99,7 @@ export function AuthorPage() {
   }
 
   const displayName = author.displayName || author.username || author.authorId;
+  const sourceUrl = authorSourceUrl(author.provider, author.authorId);
   const isList = viewMode === "list";
   const isSmall = viewMode === "small";
 
@@ -119,6 +121,19 @@ export function AuthorPage() {
             </Box>
 
             <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap", ml: "auto" }}>
+              {sourceUrl ? (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  component="a"
+                  href={sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  startIcon={<OpenInNew />}
+                >
+                  打开源站
+                </Button>
+              ) : null}
               {author.subscription ? (
                 <>
                   <Chip label="已订阅" size="small" variant="outlined" color="success" />
