@@ -11,6 +11,7 @@ import {
   liveSubscriptions,
   type LiveRecordJobRow,
 } from "../db/schema.js";
+import { nowSql } from "../lib/utils.js";
 import { liveMediaDir } from "../storage/paths.js";
 
 const MAX_CONCURRENT = 2;
@@ -68,10 +69,6 @@ async function resolveNativeBin(config: AppConfig): Promise<string> {
   throw new Error(
     "live-record binary not found. Build apps/live-record (cd apps/live-record && go build -o live-record[.exe] .) or set LIVE_RECORDER_BIN.",
   );
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
 }
 
 /** Next free segment name: audio.ogg, audio_2.ogg, audio_3.ogg, … */

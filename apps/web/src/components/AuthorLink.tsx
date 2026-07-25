@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import type { ProviderId } from "@erolib/shared";
+import type { ReactNode } from "react";
+import { Link as MuiLink } from "@mui/material";
 
 export function isValidAuthorId(
   authorId: string | null | undefined,
@@ -14,24 +14,24 @@ export function AuthorLink({
   provider,
   authorId,
   children,
-  className,
 }: {
-  provider: ProviderId | string;
+  provider: string;
   authorId: string | null | undefined;
   children: ReactNode;
-  className?: string;
 }) {
-  const label = children;
-  if (!isValidAuthorId(authorId)) {
-    return <span className={className}>{label}</span>;
-  }
+  if (!isValidAuthorId(authorId)) return <span>{children}</span>;
   return (
-    <Link
-      className={className ? `author-link ${className}` : "author-link"}
+    <MuiLink
+      component={Link}
       to={`/authors/${encodeURIComponent(provider)}/${encodeURIComponent(authorId)}`}
-      onClick={(e) => e.stopPropagation()}
+      underline="none"
+      onClick={(e: React.MouseEvent) => e.stopPropagation()}
+      sx={{
+        color: "text.secondary",
+        "&:hover": { color: "primary.main" },
+      }}
     >
-      {label}
-    </Link>
+      {children}
+    </MuiLink>
   );
 }

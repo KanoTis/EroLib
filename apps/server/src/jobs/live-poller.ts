@@ -1,4 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
+import { mapPool, nowSql } from "../lib/utils.js";
 import type { AppConfig } from "../config.js";
 import type { AppDatabase } from "../db/client.js";
 import {
@@ -35,29 +36,6 @@ export interface LivePoller {
   pollNow(): Promise<void>;
   /** Stop an active recorder session for a job (no-op if not recording). */
   stopRecording(jobId: number): Promise<void>;
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
-}
-
-async function mapPool<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  if (items.length === 0) return;
-  let i = 0;
-  const runners = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    async () => {
-      while (i < items.length) {
-        const idx = i++;
-        await worker(items[idx]!);
-      }
-    },
-  );
-  await Promise.all(runners);
 }
 
 export function createLivePoller(

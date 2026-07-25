@@ -21,17 +21,11 @@ import {
   resolveAuthorByInput,
 } from "../providers/otobanana-live.js";
 import { sessionData } from "../providers/types.js";
+import { nowSql } from "../lib/utils.js";
 import {
   authorAvatarPaths,
   pathExists,
 } from "../storage/paths.js";
-
-function nowSql(): string {
-  return new Date()
-    .toISOString()
-    .replace("T", " ")
-    .replace(/\.\d{3}Z$/, "");
-}
 
 async function avatarFileExists(
   mediaRoot: string,

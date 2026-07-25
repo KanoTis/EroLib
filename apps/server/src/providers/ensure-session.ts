@@ -10,6 +10,7 @@ import {
   providerAccounts,
   type ProviderAccountRow,
 } from "../db/schema.js";
+import { nowSql } from "../lib/utils.js";
 import { getProvider } from "./index.js";
 
 interface CredentialPayload {
@@ -17,10 +18,6 @@ interface CredentialPayload {
   username?: string;
   password?: string;
   cookieHeader?: string;
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
 }
 
 /**

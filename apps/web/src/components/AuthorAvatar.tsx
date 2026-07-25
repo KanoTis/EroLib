@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import type { ProviderId } from "@erolib/shared";
+import { Box, Typography } from "@mui/material";
 import { api } from "../api";
+import { useThemeMode } from "../ThemeContext";
 
-const PALETTES = [
+const PALETTES: [string, string][] = [
   ["#312e81", "#f97316"],
   ["#0f766e", "#a855f7"],
   ["#9f1239", "#f59e0b"],
@@ -11,7 +12,7 @@ const PALETTES = [
   ["#0e7490", "#f97316"],
   ["#4c1d95", "#38bdf8"],
   ["#be123c", "#fde68a"],
-] as const;
+];
 
 function hashSeed(input: string): number {
   let h = 2166136261;
@@ -36,50 +37,43 @@ export function AuthorAvatar({
   hasAvatar,
   size = "md",
 }: {
-  provider: ProviderId | string;
+  provider: string;
   authorId: string;
   displayName?: string | null;
   hasAvatar: boolean;
   size?: "sm" | "md" | "lg";
 }) {
+  const { mode } = useThemeMode();
+  const isLight = mode === "light";
   const [imgFailed, setImgFailed] = useState(false);
-  useEffect(() => {
-    setImgFailed(false);
-  }, [provider, authorId, hasAvatar]);
+  useEffect(() => { setImgFailed(false); }, [provider, authorId, hasAvatar]);
+
   const showImage = hasAvatar && !imgFailed;
   const seed = hashSeed(`${provider}:${authorId}`);
-  const [c0, c1] = PALETTES[seed % PALETTES.length] ?? PALETTES[0];
+  const palette = PALETTES[seed % PALETTES.length]!;
+  const [c0, c1] = palette;
   const glyph = initialGlyph(displayName, authorId);
-  const sizeClass =
-    size === "lg"
-      ? "author-avatar author-avatar--lg"
-      : size === "sm"
-        ? "author-avatar author-avatar--sm"
-        : "author-avatar";
+
+  const px = size === "lg" ? 112 : size === "sm" ? 40 : 72;
+  const fontSize = size === "lg" ? "2.5rem" : size === "sm" ? "1rem" : "1.75rem";
 
   return (
-    <div
-      className={`${sizeClass}${showImage ? " has-image" : " is-placeholder"}`}
-      style={
-        showImage
-          ? undefined
-          : {
-              background: `linear-gradient(145deg, ${c0}, ${c1}cc), radial-gradient(circle at 28% 22%, rgba(255,255,255,0.18), transparent 52%)`,
-            }
-      }
+    <Box
+      sx={{
+        width: px, height: px, borderRadius: "50%", border: "1px solid", borderColor: "divider",
+        overflow: "hidden", display: "grid", placeItems: "center", flexShrink: 0,
+        background: showImage ? (isLight ? "#F4F4F0" : "#0b0b18") : c0,
+      }}
       aria-hidden
     >
       {showImage ? (
-        <img
-          className="author-avatar-img"
-          src={api.authorAvatarUrl(provider, authorId)}
-          alt=""
-          loading="lazy"
-          onError={() => setImgFailed(true)}
-        />
+        <Box component="img" src={api.authorAvatarUrl(provider, authorId)} alt="" loading="lazy"
+          onError={() => setImgFailed(true)} sx={{ width: "100%", height: "100%", objectFit: "cover" }} />
       ) : (
-        <span className="author-avatar-glyph">{glyph}</span>
+        <Typography sx={{ fontSize, fontWeight: 700, letterSpacing: "-0.03em", lineHeight: 1, color: "rgba(248,250,252,0.95)" }}>
+          {glyph}
+        </Typography>
       )}
-    </div>
+    </Box>
   );
 }

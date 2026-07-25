@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { copyFile, readFile, rename, rm, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import type {
   DownloadProgress,
@@ -9,16 +9,19 @@ import type {
   Session,
   WorkMetadata,
 } from "@erolib/shared";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   fetchToFile,
   getSetCookieHeaders,
   mergeCookieHeader,
-  sleep,
 } from "./download-utils.js";
 import { transcodeToMp3 } from "./ffmpeg.js";
 import { downloadHlsToTs, parseM3u8 } from "./hls.js";
+import { isRecord } from "../lib/utils.js";
+import { decodeHtmlEntities, stripTags } from "../lib/html.js";
 import type { Provider } from "./types.js";
 import { DEFAULT_UA, sessionData } from "./types.js";
+import { renameOrCopy } from "../storage/paths.js";
 
 const BASE = "https://erovoice-ch.com";
 const AJAX = `${BASE}/wp-admin/admin-ajax.php`;
@@ -70,15 +73,6 @@ const RESERVED_PATH_SEGMENTS: Record<string, true> = {
   settings: true,
   account: true,
 };
-async function renameSafe(src: string, dest: string): Promise<void> {
-  try {
-    await rename(src, dest);
-  } catch {
-    await copyFile(src, dest);
-    await rm(src, { force: true });
-  }
-}
-
 function requireCookie(session: Session): string {
   const { cookieHeader } = sessionData(session);
   if (!cookieHeader) throw new Error("Missing Erovoice cookie session");
@@ -99,10 +93,6 @@ function siteHeaders(
   };
 }
 
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
 function readStringField(obj: Record<string, unknown>, key: string): string | null {
   const v = obj[key];
   return typeof v === "string" ? v : null;
@@ -116,35 +106,6 @@ function readNumberishField(
   if (typeof v === "number" && Number.isFinite(v)) return String(v);
   if (typeof v === "string" && v.trim()) return v.trim();
   return null;
-}
-
-function decodeHtmlEntities(text: string): string {
-  return text
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'")
-    .replace(/&#(\d+);/g, (_, n: string) => {
-      const code = Number.parseInt(n, 10);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
-    })
-    .replace(/&#x([0-9a-f]+);/gi, (_, h: string) => {
-      const code = Number.parseInt(h, 16);
-      return Number.isFinite(code) ? String.fromCodePoint(code) : "";
-    });
-}
-
-function stripTags(html: string): string {
-  return decodeHtmlEntities(
-    html
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " ")
-      .replace(/\s+/g, " ")
-      .trim(),
-  );
 }
 
 function parseDurationSeconds(text: string): number | null {
@@ -1014,7 +975,7 @@ export const erovoiceProvider: Provider = {
         });
         const coverExt = cover.ext === "bin" ? "jpg" : cover.ext;
         coverPath = path.join(cacheDir, `cover.${coverExt}`);
-        await renameSafe(cover.path, coverPath);
+        await renameOrCopy(cover.path, coverPath);
       } catch {
         coverPath = null;
       }

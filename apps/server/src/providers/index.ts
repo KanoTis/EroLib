@@ -16,8 +16,4 @@ export function getProvider(id: ProviderId): Provider {
   return p;
 }
 
-export function listProviders(): Provider[] {
-  return Object.values(providers);
-}
-
 export type { Provider } from "./types.js";

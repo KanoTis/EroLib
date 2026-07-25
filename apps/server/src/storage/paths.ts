@@ -177,7 +177,7 @@ export async function commitCacheToMedia(opts: {
   return { audioPath: audioDest, coverPath };
 }
 
-async function renameOrCopy(src: string, dest: string): Promise<void> {
+export async function renameOrCopy(src: string, dest: string): Promise<void> {
   try {
     await rename(src, dest);
   } catch {

@@ -6,6 +6,7 @@ import { Readable } from "node:stream";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import { pipeline } from "node:stream/promises";
 import type { DownloadProgress } from "@erolib/shared";
+import { isRecord, mapPool } from "../lib/utils.js";
 import { DEFAULT_UA } from "./types.js";
 
 export type HlsKeyMethod = "AES-128" | "NONE";
@@ -26,10 +27,6 @@ export interface HlsPlaylist {
   /** Explicit IV from EXT-X-KEY, or null → per-segment media-sequence IV */
   iv: Buffer | null;
   segments: HlsSegment[];
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 export function resolvePlaylistUrl(baseUrl: string, ref: string): string {
@@ -216,31 +213,6 @@ async function writeStreamToFile(
   });
   await pipeline(nodeStream, fileStream);
   return bytes;
-}
-
-async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let next = 0;
-
-  async function runOne(): Promise<void> {
-    while (next < items.length) {
-      const i = next;
-      next += 1;
-      const item = items[i];
-      if (item === undefined) continue;
-      results[i] = await worker(item, i);
-    }
-  }
-
-  const n = Math.max(1, Math.min(concurrency, items.length || 1));
-  const runners: Promise<void>[] = [];
-  for (let i = 0; i < n; i += 1) runners.push(runOne());
-  await Promise.all(runners);
-  return results;
 }
 
 export interface DownloadHlsOptions {

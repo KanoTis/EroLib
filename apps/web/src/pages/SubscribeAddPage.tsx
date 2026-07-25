@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import type {
-  AuthorSearchHit,
-  ProviderAccountPublic,
-  ProviderId,
-} from "@erolib/shared";
+import {
+  Box, Card, CardContent, Typography, Button, TextField, Alert, List, ListItem, ListItemText, CircularProgress,
+  FormControl, InputLabel, Select, MenuItem,
+} from "@mui/material";
+import type { AuthorSearchHit, ProviderAccountPublic, ProviderId } from "@erolib/shared";
 import { api } from "../api";
 
 export function SubscribeAddPage() {
@@ -18,226 +18,102 @@ export function SubscribeAddPage() {
   const [searching, setSearching] = useState(false);
   const [addingId, setAddingId] = useState<string | null>(null);
 
-  const configuredProviders = useMemo(
-    () => providers.map((p) => p.provider as ProviderId),
-    [providers],
-  );
+  const configuredProviders = useMemo(() => providers.map((p) => p.provider as ProviderId), [providers]);
 
-  useEffect(() => {
-    void api
-      .providers()
-      .then(setProviders)
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : String(e)),
-      );
-  }, []);
+  useEffect(() => { void api.providers().then(setProviders).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))); }, []);
 
   useEffect(() => {
     if (configuredProviders.length === 0) return;
-    if (!configuredProviders.includes(addProvider)) {
-      setAddProvider(configuredProviders[0]!);
-    }
+    if (!configuredProviders.includes(addProvider)) setAddProvider(configuredProviders[0]!);
   }, [configuredProviders, addProvider]);
 
   async function onSearch(): Promise<void> {
-    const q = query.trim();
-    if (!q) return;
-    setSearching(true);
-    setError(null);
-    setSearched(true);
-    try {
-      const rows = await api.searchAuthors(addProvider, q);
-      setHits(rows);
-    } catch (e: unknown) {
-      setHits([]);
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSearching(false);
-    }
+    const q = query.trim(); if (!q) return;
+    setSearching(true); setError(null); setSearched(true);
+    try { setHits(await api.searchAuthors(addProvider, q)); }
+    catch (e: unknown) { setHits([]); setError(e instanceof Error ? e.message : String(e)); }
+    finally { setSearching(false); }
   }
 
   async function onAddHit(hit: AuthorSearchHit): Promise<void> {
     if (addingId) return;
-    setAddingId(hit.authorId);
-    setError(null);
+    setAddingId(hit.authorId); setError(null);
     try {
-      await api.addLiveSubscription({
-        provider: hit.provider,
-        authorId: hit.authorId,
-        username: hit.username,
-        displayName: hit.displayName,
-        syncWorks: false,
-        enabled: false,
-      });
+      await api.addLiveSubscription({ provider: hit.provider, authorId: hit.authorId, username: hit.username, displayName: hit.displayName, syncWorks: false, enabled: false });
       void navigate("/sync");
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setAddingId(null);
-    }
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setAddingId(null); }
   }
 
-  function hitLabel(hit: AuthorSearchHit): string {
-    const primary =
-      hit.displayName?.trim() ||
-      hit.username?.trim() ||
-      hit.authorId;
-    return primary;
-  }
-
+  function hitLabel(hit: AuthorSearchHit): string { return hit.displayName?.trim() || hit.username?.trim() || hit.authorId; }
   function hitSecondary(hit: AuthorSearchHit): string | null {
     const parts: string[] = [];
-    if (
-      hit.username &&
-      hit.username !== hit.displayName &&
-      hit.username !== hit.authorId
-    ) {
-      parts.push(`@${hit.username}`);
-    }
-    if (hit.authorId && hit.authorId !== hit.displayName) {
-      if (!parts.includes(`@${hit.authorId}`)) {
-        parts.push(hit.authorId);
-      }
-    }
+    if (hit.username && hit.username !== hit.displayName && hit.username !== hit.authorId) parts.push(`@${hit.username}`);
+    if (hit.authorId && hit.authorId !== hit.displayName) { if (!parts.includes(`@${hit.authorId}`)) parts.push(hit.authorId); }
     return parts.length > 0 ? parts.join(" · ") : null;
   }
 
   return (
-    <div className="page">
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Sync</p>
-          <h1>手动添加作者</h1>
-          <p className="page-desc">
-            搜索并选择作者加入订阅名单；默认关闭「同步作品」与「自动录制」，请在同步页自行开启。
-          </p>
-        </div>
-        <div className="toolbar">
-          <Link to="/sync" className="button secondary">
-            返回订阅列表
-          </Link>
-        </div>
-      </header>
+    <Box>
+      <Box sx={{ mb: 3, display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 2 }}>
+        <Box>
+          <Typography variant="overline" color="text.disabled">Sync</Typography>
+          <Typography variant="h4">手动添加作者</Typography>
+          <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>搜索并选择作者加入订阅名单。</Typography>
+        </Box>
+        <Button variant="outlined" component={Link} to="/sync">返回订阅列表</Button>
+      </Box>
 
-      <div className="alert-stack">
-        {error ? (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        ) : null}
-      </div>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-      <section className="card">
-        <div className="form-grid" style={{ marginBottom: "1rem" }}>
-          <label className="field">
-            渠道
-            <select
-              value={addProvider}
-              onChange={(e) => {
-                setAddProvider(e.target.value as ProviderId);
-                setHits([]);
-                setSearched(false);
-                setError(null);
-              }}
-            >
-              {(configuredProviders.length > 0
-                ? configuredProviders
-                : (["otobanana", "koekoe", "erovoice"] as ProviderId[])
-              ).map((p) => (
-                <option key={p} value={p}>
-                  {p}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="field" style={{ gridColumn: "span 2" }}>
-            关键词
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder={
-                addProvider === "otobanana"
-                  ? "username 或 UUID"
-                  : addProvider === "koekoe"
-                    ? "作者显示名"
-                    : "作者 slug（主页 URL 最后一段，如 noah0217all）"
-              }
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void onSearch();
-                }
-              }}
-            />
-          </label>
-        </div>
-        <div className="toolbar">
-          <button
-            type="button"
-            disabled={searching || !query.trim()}
-            onClick={() => {
-              void onSearch();
-            }}
-          >
-            {searching ? <span className="spinner" /> : null}
-            搜索
-          </button>
-          <Link to="/sync" className="button secondary">
-            取消
-          </Link>
-        </div>
-      </section>
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Box sx={{ display: "flex", gap: 2, mb: 2, flexWrap: "wrap" }}>
+            <FormControl size="small" sx={{ minWidth: 160 }}>
+              <InputLabel>渠道</InputLabel>
+              <Select value={addProvider} label="渠道" onChange={(e) => { setAddProvider(e.target.value as ProviderId); setHits([]); setSearched(false); }}>
+                {(configuredProviders.length > 0 ? configuredProviders : ["otobanana", "koekoe", "erovoice"] as ProviderId[]).map((p) => <MenuItem key={p} value={p}>{p}</MenuItem>)}
+              </Select>
+            </FormControl>
+            <TextField label="关键词" value={query} onChange={(e) => setQuery(e.target.value)}
+              placeholder={addProvider === "otobanana" ? "username 或 UUID" : "作者名"} size="small" sx={{ flex: 1 }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void onSearch(); } }} />
+          </Box>
+          <Box sx={{ display: "flex", gap: 1 }}>
+            <Button variant="contained" color="primary" disabled={searching || !query.trim()} onClick={() => { void onSearch(); }}>
+              {searching && <CircularProgress size={16} sx={{ mr: 1 }} />}搜索</Button>
+            <Button variant="outlined" component={Link} to="/sync">取消</Button>
+          </Box>
+        </CardContent>
+      </Card>
 
-      {searched ? (
-        <section className="card" style={{ marginTop: "1rem" }}>
-          <h2 style={{ marginTop: 0, fontSize: "1rem" }}>搜索结果</h2>
-          {searching ? (
-            <p className="page-desc">搜索中…</p>
-          ) : hits.length === 0 ? (
-            <p className="page-desc">未找到匹配作者，请换关键词重试。</p>
-          ) : (
-            <ul className="list-plain" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-              {hits.map((hit) => {
-                const secondary = hitSecondary(hit);
-                const busy = addingId === hit.authorId;
-                return (
-                  <li
-                    key={`${hit.provider}:${hit.authorId}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      gap: "0.75rem",
-                      padding: "0.65rem 0",
-                      borderBottom: "1px solid var(--border, #333)",
-                    }}
-                  >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 600 }}>{hitLabel(hit)}</div>
-                      {secondary ? (
-                        <div className="page-desc" style={{ margin: 0 }}>
-                          {secondary}
-                        </div>
-                      ) : null}
-                    </div>
-                    <button
-                      type="button"
-                      className="button"
-                      disabled={Boolean(addingId)}
-                      onClick={() => {
-                        void onAddHit(hit);
-                      }}
-                    >
-                      {busy ? <span className="spinner" /> : null}
-                      添加
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-      ) : null}
-    </div>
+      {searched && (
+        <Card>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>搜索结果</Typography>
+            {searching ? <Typography color="text.disabled">搜索中…</Typography>
+            : hits.length === 0 ? <Typography color="text.disabled">未找到匹配作者。</Typography>
+            : (
+              <List disablePadding>
+                {hits.map((hit) => {
+                  const secondary = hitSecondary(hit);
+                  const busy = addingId === hit.authorId;
+                  return (
+                    <ListItem key={`${hit.provider}:${hit.authorId}`} divider disableGutters
+                      secondaryAction={
+                        <Button variant="outlined" size="small" disabled={Boolean(addingId)} onClick={() => { void onAddHit(hit); }}>
+                          {busy ? <CircularProgress size={14} /> : "添加"}
+                        </Button>
+                      }>
+                      <ListItemText primary={hitLabel(hit)} secondary={secondary} slotProps={{ primary: { sx: { fontWeight: 600 } } }} />
+                    </ListItem>
+                  );
+                })}
+              </List>
+            )}
+          </CardContent>
+        </Card>
+      )}
+    </Box>
   );
 }

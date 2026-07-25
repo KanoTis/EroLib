@@ -1,86 +1,32 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type {
-  AuthorPublic,
-  LiveMediaPublic,
-  WorkPublic,
-} from "@erolib/shared";
+import {
+  Box, Card, CardContent, CardActions, Typography, Button, Alert, Chip, CircularProgress,
+  ToggleButtonGroup, ToggleButton,
+} from "@mui/material";
+import { ArrowBack, PlayArrow, GridView, ViewList, ViewModule } from "@mui/icons-material";
+import type { AuthorPublic, LiveMediaPublic, WorkPublic } from "@erolib/shared";
 import { api } from "../api";
 import { AuthorAvatar } from "../components/AuthorAvatar";
-import {
-  IconBack,
-  IconPlay,
-  IconViewList,
-  IconViewSmall,
-  IconViewStandard,
-} from "../components/Icons";
-import { WorkCover } from "../components/WorkCover";
+import { CoverImage } from "../components/CoverImage";
+import { AuthorLink } from "../components/AuthorLink";
 import { usePlayer } from "../player/PlayerContext";
 
 const STATUS_LABEL: Record<string, string> = {
-  downloaded: "已下载",
-  queued: "队列中",
-  downloading: "下载中",
-  failed: "失败",
-  discovered: "已发现",
+  downloaded: "已下载", queued: "队列中", downloading: "下载中", failed: "失败", discovered: "已发现",
 };
-
 const PAGE_SIZE = 50;
-
-/** Shared with LibraryPage — same localStorage key. */
 type AuthorViewMode = "small" | "standard" | "list";
-
 const VIEW_MODE_KEY = "erolib.library.viewMode";
 
-const VIEW_MODE_OPTIONS: {
-  id: AuthorViewMode;
-  label: string;
-  icon: ReactNode;
-}[] = [
-  {
-    id: "small",
-    label: "小尺寸",
-    icon: <IconViewSmall width={16} height={16} />,
-  },
-  {
-    id: "standard",
-    label: "标准尺寸",
-    icon: <IconViewStandard width={16} height={16} />,
-  },
-  {
-    id: "list",
-    label: "列表",
-    icon: <IconViewList width={16} height={16} />,
-  },
-];
-
 function readViewMode(): AuthorViewMode {
-  try {
-    const raw = localStorage.getItem(VIEW_MODE_KEY);
-    if (raw === "small" || raw === "standard" || raw === "list") return raw;
-  } catch {
-    // ignore private mode / blocked storage
-  }
+  try { const raw = localStorage.getItem(VIEW_MODE_KEY); if (raw === "small" || raw === "standard" || raw === "list") return raw; } catch {}
   return "standard";
 }
 
-function writeViewMode(mode: AuthorViewMode): void {
-  try {
-    localStorage.setItem(VIEW_MODE_KEY, mode);
-  } catch {
-    // ignore private mode / blocked storage
-  }
-}
-
 export function AuthorPage() {
-  // React Router already decodes path params; do not decodeURIComponent again
-  // (a literal "%" in authorId would throw URIError).
-  const { provider: providerParam = "", authorId: authorIdParam = "" } =
-    useParams();
-  const provider = providerParam;
-  const authorId = authorIdParam;
+  const { provider = "", authorId = "" } = useParams();
   const { play } = usePlayer();
-
   const [author, setAuthor] = useState<AuthorPublic | null>(null);
   const [works, setWorks] = useState<WorkPublic[]>([]);
   const [liveItems, setLiveItems] = useState<LiveMediaPublic[]>([]);
@@ -92,528 +38,189 @@ export function AuthorPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [viewMode, setViewMode] = useState<AuthorViewMode>(() =>
-    readViewMode(),
-  );
+  const [viewMode, setViewMode] = useState<AuthorViewMode>(readViewMode);
 
-  const loadAuthor = useCallback(async (): Promise<void> => {
-    const data = await api.getAuthor(provider, authorId);
-    setAuthor(data);
-  }, [provider, authorId]);
-
-  const loadLists = useCallback(async (): Promise<void> => {
+  const loadAuthor = useCallback(async () => { setAuthor(await api.getAuthor(provider, authorId)); }, [provider, authorId]);
+  const loadLists = useCallback(async () => {
     const [vodBatch, liveBatch] = await Promise.all([
-      api.works({
-        provider,
-        authorId,
-        limit: PAGE_SIZE,
-        offset: 0,
-      }),
-      api.liveMedia({
-        provider,
-        authorId,
-        limit: PAGE_SIZE,
-        offset: 0,
-      }),
+      api.works({ provider, authorId, limit: PAGE_SIZE, offset: 0 }),
+      api.liveMedia({ provider, authorId, limit: PAGE_SIZE, offset: 0 }),
     ]);
-    setWorks(vodBatch);
-    setLiveItems(liveBatch);
-    setWorksOffset(vodBatch.length);
-    setLiveOffset(liveBatch.length);
-    setWorksHasMore(vodBatch.length === PAGE_SIZE);
-    setLiveHasMore(liveBatch.length === PAGE_SIZE);
+    setWorks(vodBatch); setLiveItems(liveBatch);
+    setWorksOffset(vodBatch.length); setLiveOffset(liveBatch.length);
+    setWorksHasMore(vodBatch.length === PAGE_SIZE); setLiveHasMore(liveBatch.length === PAGE_SIZE);
   }, [provider, authorId]);
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setMsg(null);
-    void (async () => {
-      try {
-        await Promise.all([loadAuthor(), loadLists()]);
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e));
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
+    setLoading(true); setError(null); setMsg(null);
+    void (async () => { try { await Promise.all([loadAuthor(), loadLists()]); } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); } finally { if (!cancelled) setLoading(false); } })();
+    return () => { cancelled = true; };
   }, [loadAuthor, loadLists]);
 
   async function loadMoreWorks(): Promise<void> {
-    const batch = await api.works({
-      provider,
-      authorId,
-      limit: PAGE_SIZE,
-      offset: worksOffset,
-    });
-    setWorks((prev) => [...prev, ...batch]);
-    setWorksOffset((o) => o + batch.length);
-    setWorksHasMore(batch.length === PAGE_SIZE);
+    const batch = await api.works({ provider, authorId, limit: PAGE_SIZE, offset: worksOffset });
+    setWorks((prev) => [...prev, ...batch]); setWorksOffset((o) => o + batch.length); setWorksHasMore(batch.length === PAGE_SIZE);
   }
-
   async function loadMoreLive(): Promise<void> {
-    const batch = await api.liveMedia({
-      provider,
-      authorId,
-      limit: PAGE_SIZE,
-      offset: liveOffset,
-    });
-    setLiveItems((prev) => [...prev, ...batch]);
-    setLiveOffset((o) => o + batch.length);
-    setLiveHasMore(batch.length === PAGE_SIZE);
+    const batch = await api.liveMedia({ provider, authorId, limit: PAGE_SIZE, offset: liveOffset });
+    setLiveItems((prev) => [...prev, ...batch]); setLiveOffset((o) => o + batch.length); setLiveHasMore(batch.length === PAGE_SIZE);
   }
-
   async function onAddSubscription(): Promise<void> {
-    if (!author) return;
-    setBusy(true);
-    setError(null);
-    setMsg(null);
-    try {
-      await api.addLiveSubscription({
-        provider: author.provider,
-        authorId: author.authorId,
-        username: author.username,
-        displayName: author.displayName,
-        enabled: false,
-        syncWorks: false,
-      });
-      setMsg("已添加订阅（默认同步作品与自动录制均为关）");
-      await loadAuthor();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    if (!author) return; setBusy(true); setError(null); setMsg(null);
+    try { await api.addLiveSubscription({ provider: author.provider, authorId: author.authorId, username: author.username, displayName: author.displayName, enabled: false, syncWorks: false }); setMsg("已添加订阅"); await loadAuthor(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
-
-  async function onToggleSyncWorks(next: boolean): Promise<void> {
-    if (!author?.subscription) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.patchLiveSubscription(author.subscription.id, {
-        syncWorks: next,
-      });
-      await loadAuthor();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  async function onToggle(key: "enabled" | "syncWorks", next: boolean): Promise<void> {
+    if (!author?.subscription) return; setBusy(true); setError(null);
+    try { await api.patchLiveSubscription(author.subscription.id, { [key]: next }); await loadAuthor(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
-
-  async function onToggleLiveRecord(next: boolean): Promise<void> {
-    if (!author?.subscription) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await api.patchLiveSubscription(author.subscription.id, {
-        enabled: next,
-      });
-      await loadAuthor();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
   function playVod(w: WorkPublic): void {
-    play({
-      id: `vod:${w.provider}:${w.workId}`,
-      kind: "vod",
-      title: w.title,
-      subtitle: w.authorName ?? w.authorId ?? undefined,
-      src: api.audioUrl(w.provider, w.workId),
-      artworkUrl: w.coverPath ? api.coverUrl(w.provider, w.workId) : null,
-    });
+    play({ id: `vod:${w.provider}:${w.workId}`, kind: "vod", provider: w.provider, mediaId: w.workId, title: w.title, subtitle: w.authorName ?? w.authorId ?? undefined, src: api.audioUrl(w.provider, w.workId), artworkUrl: w.coverPath ? api.coverUrl(w.provider, w.workId) : null });
   }
-
   function playLive(m: LiveMediaPublic, title: string): void {
-    play({
-      id: `live:${m.provider}:${m.roomId}`,
-      kind: "live",
-      title,
-      subtitle: m.authorName ?? m.authorId ?? undefined,
-      src: api.liveAudioUrl(m.provider, m.roomId),
-      artworkUrl: null,
-    });
-  }
-
-  function changeViewMode(mode: AuthorViewMode): void {
-    setViewMode(mode);
-    writeViewMode(mode);
+    play({ id: `live:${m.provider}:${m.roomId}`, kind: "live", provider: m.provider, mediaId: m.roomId, title, subtitle: m.authorName ?? m.authorId ?? undefined, src: api.liveAudioUrl(m.provider, m.roomId), artworkUrl: null });
   }
 
   if (loading && !author) {
     return (
-      <div className="page">
-        <div className="loading-block" role="status">
-          <span className="spinner" />
-          加载作者页…
-        </div>
-      </div>
+      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, color: "text.disabled" }}>
+        <CircularProgress size={18} /><Typography variant="body2">加载作者页…</Typography>
+      </Box>
     );
   }
-
   if (error && !author) {
-    return (
-      <div className="page">
-        <Link className="back-link" to="/">
-          <IconBack width={16} height={16} />
-          返回媒体库
-        </Link>
-        <p className="error" role="alert">
-          {error}
-        </p>
-      </div>
-    );
+    return <Box><Button component={Link} to="/" startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回媒体库</Button><Alert severity="error">{error}</Alert></Box>;
   }
-
   if (!author) {
-    return (
-      <div className="page">
-        <Link className="back-link" to="/">
-          <IconBack width={16} height={16} />
-          返回媒体库
-        </Link>
-        <p className="muted">未找到作者</p>
-      </div>
-    );
+    return <Box><Button component={Link} to="/" startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回媒体库</Button><Typography color="text.disabled">未找到作者</Typography></Box>;
   }
 
-  const displayName =
-    author.displayName || author.username || author.authorId;
-
+  const displayName = author.displayName || author.username || author.authorId;
   const isList = viewMode === "list";
   const isSmall = viewMode === "small";
-  const listClassName =
-    viewMode === "list"
-      ? "library-list"
-      : viewMode === "small"
-        ? "library-grid library-grid--small"
-        : "library-grid";
 
   return (
-    <div className="page">
-      <Link className="back-link" to="/">
-        <IconBack width={16} height={16} />
-        返回媒体库
-      </Link>
+    <Box>
+      <Button component={Link} to="/" startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回媒体库</Button>
 
-      <section className="card author-header">
-        <div className="author-hero">
-          <AuthorAvatar
-            provider={author.provider}
-            authorId={author.authorId}
-            displayName={displayName}
-            hasAvatar={author.hasAvatar}
-            size="lg"
-          />
-          <div>
-            <p className="page-kicker">{author.provider}</p>
-            <h1 className="detail-title">{displayName}</h1>
-            <div className="author-ids muted small">
-              {author.username ? (
-                <span>@{author.username}</span>
-              ) : null}
-              <span className="author-id-raw">{author.authorId}</span>
-            </div>
-          </div>
-        </div>
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Box sx={{ display: "flex", gap: 3, alignItems: "center", flexWrap: "wrap" }}>
+            <AuthorAvatar provider={author.provider} authorId={author.authorId} displayName={displayName} hasAvatar={author.hasAvatar} size="lg" />
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Typography variant="overline" color="text.disabled">{author.provider}</Typography>
+              <Typography variant="h4">{displayName}</Typography>
+              <Box sx={{ display: "flex", gap: 1.5, mt: 0.5, flexWrap: "wrap" }}>
+                {author.username && <Typography variant="body2" color="text.disabled">@{author.username}</Typography>}
+                <Typography variant="body2" color="text.disabled" sx={{ wordBreak: "break-all" }}>{author.authorId}</Typography>
+              </Box>
+            </Box>
 
-        <div className="author-subscribe">
-          <h2 className="section-title">订阅</h2>
-          {author.subscription ? (
-            <div className="author-subscribe-row">
-              <span className="badge soft">已订阅</span>
-              <label className="author-toggle">
-                <span>同步作品</span>
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={busy}
-                  onClick={() => {
-                    void onToggleSyncWorks(!author.subscription!.syncWorks);
-                  }}
-                >
-                  {author.subscription.syncWorks ? "开" : "关"}
-                </button>
-              </label>
-              {author.provider === "otobanana" ? (
-                <label className="author-toggle">
-                  <span>自动录制</span>
-                  <button
-                    type="button"
-                    className="secondary"
-                    disabled={busy}
-                    onClick={() => {
-                      void onToggleLiveRecord(!author.subscription!.enabled);
-                    }}
-                  >
-                    {author.subscription.enabled ? "开" : "关"}
-                  </button>
-                </label>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, flexWrap: "wrap", ml: "auto" }}>
+              {author.subscription ? (
+                <>
+                  <Chip label="已订阅" size="small" variant="outlined" color="success" />
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <Typography variant="body2">同步作品</Typography>
+                    <Button size="small" variant="outlined" disabled={busy} onClick={() => { void onToggle("syncWorks", !author.subscription!.syncWorks); }}>{author.subscription.syncWorks ? "开" : "关"}</Button>
+                  </Box>
+                  {author.provider === "otobanana" ? (
+                    <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                      <Typography variant="body2">自动录制</Typography>
+                      <Button size="small" variant="outlined" disabled={busy} onClick={() => { void onToggle("enabled", !author.subscription!.enabled); }}>{author.subscription.enabled ? "开" : "关"}</Button>
+                    </Box>
+                  ) : null}
+                </>
               ) : (
-                <span className="muted small">自动录制仅支持 otobanana</span>
+                <Button variant="contained" color="primary" size="small" disabled={busy} onClick={() => { void onAddSubscription(); }}>添加订阅</Button>
               )}
-            </div>
-          ) : (
-            <div className="author-subscribe-row">
-              <span className="muted">未订阅</span>
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  void onAddSubscription();
-                }}
-              >
-                添加订阅
-              </button>
-            </div>
+            </Box>
+          </Box>
+
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mt: 1.5 }}>
+            {error && <Alert severity="error">{error}</Alert>}
+            {msg && <Alert severity="success">{msg}</Alert>}
+          </Box>
+        </CardContent>
+      </Card>
+
+      <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+        <ToggleButtonGroup value={viewMode} exclusive size="small" onChange={(_, v) => { if (v) { setViewMode(v); localStorage.setItem(VIEW_MODE_KEY, v); } }}>
+          <ToggleButton value="small" aria-label="小尺寸"><ViewModule fontSize="small" /></ToggleButton>
+          <ToggleButton value="standard" aria-label="标准尺寸"><GridView fontSize="small" /></ToggleButton>
+          <ToggleButton value="list" aria-label="列表"><ViewList fontSize="small" /></ToggleButton>
+        </ToggleButtonGroup>
+      </Box>
+
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>点播作品</Typography>
+          {works.length === 0 ? <Typography color="text.disabled">暂无该作者的本地点播作品</Typography> : (
+            <>
+              <Box sx={isList ? { display: "flex", flexDirection: "column", gap: 1 } : { display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isSmall ? 148 : 220}px, 1fr))`, gap: 2 }}>
+                {works.map((w) => {
+                  const sc = w.status === "downloaded" ? "success" as const : w.status === "failed" ? "error" as const : w.status === "downloading" || w.status === "queued" ? "warning" as const : "default" as const;
+                  return (
+                    <Card key={`vod:${w.id}`} sx={{ display: "flex", flexDirection: isList ? "row" : "column" }}>
+                      <CoverImage provider={w.provider} workId={w.workId} title={w.title} authorName={w.authorName} coverPath={w.coverPath} size={isList ? "list" : "card"}
+                        badge={isList ? undefined : <Chip label={STATUS_LABEL[w.status] ?? w.status} size="small" color={sc} />} />
+                      <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+                        <CardContent sx={{ flex: 1, py: 1, px: isList ? 2 : undefined }}>
+                          <Typography component={Link} to={`/works/${w.provider}/${w.workId}`}
+                            sx={{ fontWeight: 600, fontSize: "0.95rem", color: "text.primary", textDecoration: "none", "&:hover": { color: "secondary.light" }, ...(isList ? {} : { overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }) }} noWrap={isList}>{w.title}</Typography>
+                          <Typography variant="body2" color="text.disabled"><AuthorLink provider={w.provider} authorId={w.authorId}>{w.authorName ?? w.authorId}</AuthorLink> · {w.provider}</Typography>
+                        </CardContent>
+                        <CardActions sx={{ pt: 0, px: isList ? 2 : undefined, flexWrap: "wrap", gap: 0.5 }}>
+                          <Chip label="点播" size="small" variant="outlined" />
+                          {w.status === "downloaded" ? (
+                            <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)} sx={{ ml: isList ? "auto" : undefined }}>{isSmall && !isList ? "" : "播放"}</Button>
+                          ) : <Typography variant="caption" color="text.disabled">不可播</Typography>}
+                        </CardActions>
+                      </Box>
+                    </Card>
+                  );
+                })}
+              </Box>
+              {worksHasMore && <Box sx={{ mt: 2 }}><Button variant="outlined" onClick={() => { void loadMoreWorks(); }}>加载更多点播</Button></Box>}
+            </>
           )}
-        </div>
+        </CardContent>
+      </Card>
 
-        <div className="alert-stack" style={{ marginTop: "0.75rem" }}>
-          {error ? (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          ) : null}
-          {msg ? (
-            <p className="ok" role="status">
-              {msg}
-            </p>
-          ) : null}
-        </div>
-      </section>
-
-      <div className="author-view-toolbar">
-        <div className="view-mode-toggle" role="group" aria-label="视图模式">
-          {VIEW_MODE_OPTIONS.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              className="view-mode-btn"
-              aria-label={opt.label}
-              title={opt.label}
-              aria-pressed={viewMode === opt.id}
-              onClick={() => changeViewMode(opt.id)}
-            >
-              {opt.icon}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <section className="card" style={{ marginTop: "0.5rem" }}>
-        <h2 className="section-title">点播作品</h2>
-        {works.length === 0 ? (
-          <p className="muted">暂无该作者的本地点播作品</p>
-        ) : (
-          <div className={listClassName}>
-            {works.map((w) => (
-              <article
-                className={isList ? "work-card work-card--list" : "work-card"}
-                key={`vod:${w.id}`}
-              >
-                <WorkCover
-                  provider={w.provider}
-                  workId={w.workId}
-                  title={w.title}
-                  authorName={w.authorName}
-                  coverPath={w.coverPath}
-                  size={isList ? "list" : "card"}
-                  badge={
-                    isList ? undefined : (
-                      <span className={`badge ${w.status}`}>
-                        {STATUS_LABEL[w.status] ?? w.status}
-                      </span>
-                    )
-                  }
-                />
-                {isList ? (
-                  <div className="work-body">
-                    <div className="work-main">
-                      <Link
-                        className="work-title"
-                        to={`/works/${w.provider}/${w.workId}`}
-                      >
-                        {w.title}
-                      </Link>
-                      <div className="work-meta">
-                        {w.authorName ?? w.authorId} · {w.provider}
-                      </div>
-                    </div>
-                    <div className="work-actions">
-                      <span className="badge soft">点播</span>
-                      <span className={`badge ${w.status}`}>
-                        {STATUS_LABEL[w.status] ?? w.status}
-                      </span>
-                      {w.status === "downloaded" ? (
-                        <button type="button" onClick={() => playVod(w)}>
-                          <IconPlay width={14} height={14} />
-                          播放
-                        </button>
-                      ) : (
-                        <span className="muted small">不可播</span>
-                      )}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="work-body">
-                    <Link
-                      className="work-title"
-                      to={`/works/${w.provider}/${w.workId}`}
-                    >
-                      {w.title}
-                    </Link>
-                    <div className="work-meta">
-                      {w.authorName ?? w.authorId} · {w.provider}
-                    </div>
-                    <div className="work-actions">
-                      <span className="badge soft">点播</span>
-                      {w.status === "downloaded" ? (
-                        <button
-                          type="button"
-                          className={
-                            isSmall ? "play-icon-btn icon-btn" : undefined
-                          }
-                          aria-label={
-                            isSmall ? `播放 ${w.title}` : undefined
-                          }
-                          onClick={() => playVod(w)}
-                        >
-                          <IconPlay width={14} height={14} />
-                          {isSmall ? null : "播放"}
-                        </button>
-                      ) : (
-                        <span className="muted small">不可播</span>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
-        )}
-        {worksHasMore ? (
-          <div className="form-actions" style={{ marginTop: "1rem" }}>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                void loadMoreWorks();
-              }}
-            >
-              加载更多点播
-            </button>
-          </div>
-        ) : null}
-      </section>
-
-      <section className="card" style={{ marginTop: "1rem" }}>
-        <h2 className="section-title">直播回放</h2>
-        {liveItems.length === 0 ? (
-          <p className="muted">暂无该作者的本地直播回放</p>
-        ) : (
-          <div className={listClassName}>
-            {liveItems.map((m) => {
-              const title = m.title || m.roomId;
-              return (
-                <article
-                  className={
-                    isList ? "work-card work-card--list" : "work-card"
-                  }
-                  key={`live:${m.id}`}
-                >
-                  <WorkCover
-                    provider={m.provider}
-                    workId={m.roomId}
-                    title={title}
-                    authorName={m.authorName}
-                    coverPath={null}
-                    size={isList ? "list" : "card"}
-                    badge={
-                      isList ? undefined : (
-                        <span className="badge queued">直播</span>
-                      )
-                    }
-                  />
-                  {isList ? (
-                    <div className="work-body">
-                      <div className="work-main">
-                        <div className="work-title">{title}</div>
-                        <div className="work-meta">
-                          {m.authorName ?? m.authorId} · {m.provider}
-                        </div>
-                        <div className="work-meta">
-                          录制完成：{m.recordedAt || m.updatedAt}
-                        </div>
-                      </div>
-                      <div className="work-actions">
-                        <span className="badge soft">直播</span>
-                        <button
-                          type="button"
-                          onClick={() => playLive(m, title)}
-                        >
-                          <IconPlay width={14} height={14} />
-                          播放
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="work-body">
-                      <div className="work-title">{title}</div>
-                      <div className="work-meta">
-                        {m.authorName ?? m.authorId} · {m.provider}
-                      </div>
-                      <div className="work-meta">
-                        录制完成：{m.recordedAt || m.updatedAt}
-                      </div>
-                      <div className="work-actions">
-                        <span className="badge soft">直播</span>
-                        <button
-                          type="button"
-                          className={
-                            isSmall ? "play-icon-btn icon-btn" : undefined
-                          }
-                          aria-label={
-                            isSmall ? `播放 ${title}` : undefined
-                          }
-                          onClick={() => playLive(m, title)}
-                        >
-                          <IconPlay width={14} height={14} />
-                          {isSmall ? null : "播放"}
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </article>
-              );
-            })}
-          </div>
-        )}
-        {liveHasMore ? (
-          <div className="form-actions" style={{ marginTop: "1rem" }}>
-            <button
-              type="button"
-              className="secondary"
-              onClick={() => {
-                void loadMoreLive();
-              }}
-            >
-              加载更多回放
-            </button>
-          </div>
-        ) : null}
-      </section>
-    </div>
+      <Card>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>直播回放</Typography>
+          {liveItems.length === 0 ? <Typography color="text.disabled">暂无该作者的本地直播回放</Typography> : (
+            <>
+              <Box sx={isList ? { display: "flex", flexDirection: "column", gap: 1 } : { display: "grid", gridTemplateColumns: `repeat(auto-fill, minmax(${isSmall ? 148 : 220}px, 1fr))`, gap: 2 }}>
+                {liveItems.map((m) => {
+                  const title = m.title || m.roomId;
+                  return (
+                    <Card key={`live:${m.id}`} sx={{ display: "flex", flexDirection: isList ? "row" : "column" }}>
+                      <CoverImage provider={m.provider} workId={m.roomId} title={title} authorName={m.authorName} coverPath={null} size={isList ? "list" : "card"}
+                        badge={isList ? undefined : <Chip label="直播" size="small" color="warning" />} />
+                      <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+                        <CardContent sx={{ flex: 1, py: 1, px: isList ? 2 : undefined }}>
+                          <Typography sx={{ fontWeight: 600, fontSize: "0.95rem", ...(isList ? {} : { overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }) }} noWrap={isList}>{title}</Typography>
+                          <Typography variant="body2" color="text.disabled">{m.authorName ?? m.authorId} · {m.provider}</Typography>
+                          {!isList && <Typography variant="caption" color="text.disabled">录制完成：{m.recordedAt || m.updatedAt}</Typography>}
+                        </CardContent>
+                        <CardActions sx={{ pt: 0, px: isList ? 2 : undefined, flexWrap: "wrap", gap: 0.5 }}>
+                          <Chip label="直播" size="small" variant="outlined" />
+                          <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playLive(m, title)} sx={{ ml: isList ? "auto" : undefined }}>{isSmall && !isList ? "" : "播放"}</Button>
+                        </CardActions>
+                      </Box>
+                    </Card>
+                  );
+                })}
+              </Box>
+              {liveHasMore && <Box sx={{ mt: 2 }}><Button variant="outlined" onClick={() => { void loadMoreLive(); }}>加载更多回放</Button></Box>}
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </Box>
   );
 }

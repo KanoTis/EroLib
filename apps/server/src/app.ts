@@ -1,5 +1,5 @@
 import { serveStatic } from "@hono/node-server/serve-static";
-import { and, desc, eq, like, or, sql } from "drizzle-orm";
+import { and, desc, eq, like, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
@@ -265,6 +265,52 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
   });
 
   app.use("/api/*", authMiddleware(config));
+
+  /** Image content-type from file extension. */
+  const imageMime = (ext: string): string =>
+    ext === ".png" ? "image/png"
+    : ext === ".webp" ? "image/webp"
+    : ext === ".gif" ? "image/gif"
+    : "image/jpeg";
+
+  /** Stream a file with optional Range support. */
+  const streamFile = (
+    c: import("hono").Context,
+    filePath: string,
+    size: number,
+    contentType: string,
+    extraHeaders?: Record<string, string>,
+  ): Response => {
+    const range = c.req.header("range");
+    if (range) {
+      const m = /bytes=(\d+)-(\d*)/.exec(range);
+      if (m) {
+        const start = Number.parseInt(m[1] ?? "0", 10);
+        const end = m[2] ? Number.parseInt(m[2], 10) : size - 1;
+        if (start >= size || end >= size || start > end) {
+          return c.body(null, 416, {
+            "Content-Range": `bytes */${size}`,
+          });
+        }
+        const chunkSize = end - start + 1;
+        const stream = createReadStream(filePath, { start, end });
+        return c.body(Readable.toWeb(stream) as ReadableStream, 206, {
+          "Content-Range": `bytes ${start}-${end}/${size}`,
+          "Accept-Ranges": "bytes",
+          "Content-Length": String(chunkSize),
+          "Content-Type": contentType,
+          ...extraHeaders,
+        });
+      }
+    }
+    const stream = createReadStream(filePath);
+    return c.body(Readable.toWeb(stream) as ReadableStream, 200, {
+      "Content-Length": String(size),
+      "Accept-Ranges": "bytes",
+      "Content-Type": contentType,
+      ...extraHeaders,
+    });
+  };
 
   app.get("/api/health", (c) =>
     c.json({
@@ -737,43 +783,12 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     if (!(await pathExists(audioPath))) {
       return c.json({ error: "Audio file missing" }, 404);
     }
-    const st = statSync(audioPath);
-    const size = st.size;
-    const range = c.req.header("range");
+    const size = statSync(audioPath).size;
     const contentType =
-      row.audioExt === "mp3"
-        ? "audio/mpeg"
-        : row.audioExt === "m4a"
-          ? "audio/mp4"
-          : "application/octet-stream";
-
-    if (range) {
-      const m = /bytes=(\d+)-(\d*)/.exec(range);
-      if (m) {
-        const start = Number.parseInt(m[1] ?? "0", 10);
-        const end = m[2] ? Number.parseInt(m[2], 10) : size - 1;
-        if (start >= size || end >= size || start > end) {
-          return c.body(null, 416, {
-            "Content-Range": `bytes */${size}`,
-          });
-        }
-        const chunkSize = end - start + 1;
-        const stream = createReadStream(audioPath, { start, end });
-        return c.body(Readable.toWeb(stream) as ReadableStream, 206, {
-          "Content-Range": `bytes ${start}-${end}/${size}`,
-          "Accept-Ranges": "bytes",
-          "Content-Length": String(chunkSize),
-          "Content-Type": contentType,
-        });
-      }
-    }
-
-    const stream = createReadStream(audioPath);
-    return c.body(Readable.toWeb(stream) as ReadableStream, 200, {
-      "Content-Length": String(size),
-      "Accept-Ranges": "bytes",
-      "Content-Type": contentType,
-    });
+      row.audioExt === "mp3" ? "audio/mpeg"
+      : row.audioExt === "m4a" ? "audio/mp4"
+      : "application/octet-stream";
+    return streamFile(c, audioPath, size, contentType);
   });
 
   app.get("/api/works/:provider/:workId/cover", async (c) => {
@@ -790,20 +805,9 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     if (!(await pathExists(coverPath))) {
       return c.json({ error: "Cover file missing" }, 404);
     }
-    const ext = path.extname(coverPath).toLowerCase();
-    const contentType =
-      ext === ".png"
-        ? "image/png"
-        : ext === ".webp"
-          ? "image/webp"
-          : ext === ".gif"
-            ? "image/gif"
-            : "image/jpeg";
-    const st = statSync(coverPath);
-    const stream = createReadStream(coverPath);
-    return c.body(Readable.toWeb(stream) as ReadableStream, 200, {
-      "Content-Length": String(st.size),
-      "Content-Type": contentType,
+    const contentType = imageMime(path.extname(coverPath).toLowerCase());
+    const size = statSync(coverPath).size;
+    return streamFile(c, coverPath, size, contentType, {
       "Cache-Control": "private, max-age=3600",
     });
   });
@@ -1087,20 +1091,9 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       authorId,
     });
     if (!abs) return c.json({ error: "No avatar" }, 404);
-    const ext = path.extname(abs).toLowerCase();
-    const contentType =
-      ext === ".png"
-        ? "image/png"
-        : ext === ".webp"
-          ? "image/webp"
-          : ext === ".gif"
-            ? "image/gif"
-            : "image/jpeg";
-    const st = statSync(abs);
-    const stream = createReadStream(abs);
-    return c.body(Readable.toWeb(stream) as ReadableStream, 200, {
-      "Content-Length": String(st.size),
-      "Content-Type": contentType,
+    const contentType = imageMime(path.extname(abs).toLowerCase());
+    const size = statSync(abs).size;
+    return streamFile(c, abs, size, contentType, {
       "Cache-Control": "private, max-age=3600",
     });
   });
@@ -1888,47 +1881,14 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     if (!(await pathExists(audioPath))) {
       return c.json({ error: "Audio file missing" }, 404);
     }
-    const st = statSync(audioPath);
-    const size = st.size;
-    const range = c.req.header("range");
+    const size = statSync(audioPath).size;
     const contentType =
-      row.audioExt === "wav"
-        ? "audio/wav"
-        : row.audioExt === "ogg" || row.audioExt === "opus"
-          ? "audio/ogg"
-          : row.audioExt === "mp3"
-            ? "audio/mpeg"
-            : row.audioExt === "m4a"
-              ? "audio/mp4"
-              : "application/octet-stream";
-
-    if (range) {
-      const m = /bytes=(\d+)-(\d*)/.exec(range);
-      if (m) {
-        const start = Number.parseInt(m[1] ?? "0", 10);
-        const end = m[2] ? Number.parseInt(m[2], 10) : size - 1;
-        if (start >= size || end >= size || start > end) {
-          return c.body(null, 416, {
-            "Content-Range": `bytes */${size}`,
-          });
-        }
-        const chunkSize = end - start + 1;
-        const stream = createReadStream(audioPath, { start, end });
-        return c.body(Readable.toWeb(stream) as ReadableStream, 206, {
-          "Content-Range": `bytes ${start}-${end}/${size}`,
-          "Accept-Ranges": "bytes",
-          "Content-Length": String(chunkSize),
-          "Content-Type": contentType,
-        });
-      }
-    }
-
-    const stream = createReadStream(audioPath);
-    return c.body(Readable.toWeb(stream) as ReadableStream, 200, {
-      "Content-Length": String(size),
-      "Accept-Ranges": "bytes",
-      "Content-Type": contentType,
-    });
+      row.audioExt === "wav" ? "audio/wav"
+      : row.audioExt === "ogg" || row.audioExt === "opus" ? "audio/ogg"
+      : row.audioExt === "mp3" ? "audio/mpeg"
+      : row.audioExt === "m4a" ? "audio/mp4"
+      : "application/octet-stream";
+    return streamFile(c, audioPath, size, contentType);
   });
 
   // SPA static (production)
@@ -1960,5 +1920,4 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
   return app;
 }
 
-// keep sql import available for future aggregates
-void sql;
+

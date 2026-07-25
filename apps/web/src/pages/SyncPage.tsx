@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import type {
-  LiveSubscriptionPublic,
-  ProviderAccountPublic,
-  SyncRunPublic,
-} from "@erolib/shared";
+import {
+  Box, Card, CardContent, Typography, Button, Alert, Chip,
+  Table, TableHead, TableRow, TableCell, TableBody,
+  ToggleButtonGroup, ToggleButton, CircularProgress,
+} from "@mui/material";
+import { Refresh } from "@mui/icons-material";
+import type { LiveSubscriptionPublic, ProviderAccountPublic, SyncRunPublic } from "@erolib/shared";
 import { api } from "../api";
-import { IconRefresh } from "../components/Icons";
 
 type SyncTab = "subscribe" | "vod";
 
@@ -22,454 +23,172 @@ export function SyncPage() {
   const [importing, setImporting] = useState(false);
   const [toggleId, setToggleId] = useState<number | null>(null);
 
-  async function loadRuns(): Promise<void> {
-    setRuns(await api.syncRuns());
-  }
-
-  async function loadProviders(): Promise<void> {
-    setProviders(await api.providers());
-  }
-
-  async function loadSubs(): Promise<void> {
-    setSubs(await api.liveSubscriptions());
-  }
-
-  async function loadVod(): Promise<void> {
-    await Promise.all([loadRuns(), loadProviders()]);
-  }
+  async function loadRuns(): Promise<void> { setRuns(await api.syncRuns()); }
+  async function loadProviders(): Promise<void> { setProviders(await api.providers()); }
+  async function loadSubs(): Promise<void> { setSubs(await api.liveSubscriptions()); }
+  async function loadVod(): Promise<void> { await Promise.all([loadRuns(), loadProviders()]); }
 
   useEffect(() => {
-    void loadSubs().catch((e: unknown) =>
-      setError(e instanceof Error ? e.message : String(e)),
-    );
-    void loadVod().catch((e: unknown) =>
-      setError(e instanceof Error ? e.message : String(e)),
-    );
-    const t = setInterval(() => {
-      if (tab === "vod") {
-        void loadRuns().catch(() => undefined);
-      }
-    }, 4000);
+    void loadSubs().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    void loadVod().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    const t = setInterval(() => { if (tab === "vod") { void loadRuns().catch(() => undefined); } }, 4000);
     return () => clearInterval(t);
   }, [tab]);
 
   async function onImportFollowees(): Promise<void> {
-    setImporting(true);
-    setError(null);
-    setMsg(null);
+    setImporting(true); setError(null); setMsg(null);
     try {
       const r = await api.importFolloweeSubscriptions();
       await loadSubs();
-      const parts = r.providers.map((p) => {
-        if (p.skipped) return `${p.provider}: ${p.skipped}`;
-        if (p.error) return `${p.provider}: 失败 ${p.error}`;
-        return `${p.provider}: 新增 ${p.imported} / 已有 ${p.existing} / 拉取 ${p.fetched}`;
-      });
-      setMsg(
-        `已从关注列表导入（默认双关）。合计新增 ${r.totalImported}。${parts.join("；")}`,
-      );
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setImporting(false);
-    }
+      const parts = r.providers.map((p) => p.skipped ? `${p.provider}: ${p.skipped}` : p.error ? `${p.provider}: 失败` : `${p.provider}: 新增 ${p.imported}`);
+      setMsg(`已导入。合计新增 ${r.totalImported}。`);
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setImporting(false); }
   }
 
   async function onDelete(id: number): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.deleteLiveSubscription(id);
-      await loadSubs();
-      setMsg("已移除订阅");
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+    setBusy(true); setError(null);
+    try { await api.deleteLiveSubscription(id); await loadSubs(); setMsg("已移除"); }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
   }
 
-  async function onToggleLiveRecord(
-    id: number,
-    enabled: boolean,
-  ): Promise<void> {
-    setBusy(true);
-    setError(null);
-    try {
-      await api.patchLiveSubscription(id, { enabled });
-      await loadSubs();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
+  async function onToggle(id: number, key: "enabled" | "syncWorks", next: boolean): Promise<void> {
+    setBusy(true); setError(null);
+    try { await api.patchLiveSubscription(id, { [key]: next }); await loadSubs(); }
+    catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
   }
 
-  async function onToggleSyncWorks(
-    id: number,
-    syncWorks: boolean,
-  ): Promise<void> {
-    setBusy(true);
-    setError(null);
+  async function onToggleFavoriteSync(p: ProviderAccountPublic): Promise<void> {
+    setToggleId(p.id); setError(null); setMsg(null);
     try {
-      await api.patchLiveSubscription(id, { syncWorks });
-      await loadSubs();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onToggleFavoriteSync(
-    p: ProviderAccountPublic,
-  ): Promise<void> {
-    setToggleId(p.id);
-    setError(null);
-    setMsg(null);
-    try {
-      await api.patchProvider(p.id, {
-        favoriteSyncEnabled: !p.favoriteSyncEnabled,
-      });
+      await api.patchProvider(p.id, { favoriteSyncEnabled: !p.favoriteSyncEnabled });
       await loadProviders();
-      setMsg(
-        p.favoriteSyncEnabled
-          ? `已关闭 ${p.provider} 收藏同步`
-          : `已开启 ${p.provider} 收藏同步`,
-      );
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setToggleId(null);
-    }
+      setMsg(p.favoriteSyncEnabled ? `已关闭 ${p.provider}` : `已开启 ${p.provider}`);
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setToggleId(null); }
   }
 
   return (
-    <div className="page">
-      <header className="page-header">
-        <div>
-          <p className="page-kicker">Sync</p>
-          <h1>同步</h1>
-          <p className="page-desc">
-            管理作者订阅（同步作品 / 自动录制），并按渠道控制 VOD
-            收藏夹同步。
-          </p>
-        </div>
-      </header>
+    <Box>
+      <Box sx={{ mb: 3 }}>
+        <Typography variant="overline" color="text.disabled">Sync</Typography>
+        <Typography variant="h4">同步</Typography>
+        <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>管理作者订阅，按渠道控制 VOD 同步。</Typography>
+      </Box>
 
-      <div className="tabs" role="tablist" aria-label="同步分区">
-        <button
-          type="button"
-          role="tab"
-          className={`tab${tab === "subscribe" ? " active" : ""}`}
-          aria-selected={tab === "subscribe"}
-          onClick={() => setTab("subscribe")}
-        >
-          订阅作者
-        </button>
-        <button
-          type="button"
-          role="tab"
-          className={`tab${tab === "vod" ? " active" : ""}`}
-          aria-selected={tab === "vod"}
-          onClick={() => setTab("vod")}
-        >
-          VOD 同步
-        </button>
-      </div>
+      {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
+      {msg && <Alert severity="success" sx={{ mb: 2 }}>{msg}</Alert>}
 
-      <div className="alert-stack">
-        {error ? (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        {msg ? (
-          <p className="ok" role="status">
-            {msg}
-          </p>
-        ) : null}
-      </div>
+      <ToggleButtonGroup value={tab} exclusive onChange={(_, v) => v && setTab(v)} size="small" sx={{ mb: 2 }}>
+        <ToggleButton value="subscribe">订阅作者</ToggleButton>
+        <ToggleButton value="vod">VOD 同步</ToggleButton>
+      </ToggleButtonGroup>
 
       {tab === "subscribe" ? (
-        <section className="card">
-          <div className="card-header">
-            <h2>订阅作者</h2>
-            <span className="badge soft">{subs.length} 位</span>
-          </div>
-          <p className="muted small" style={{ marginBottom: "0.75rem" }}>
-            可从各渠道「关注」导入到本机名单（默认关闭同步作品与自动录制）。
-            自动录制仅 otobanana 可开。koekoe 无平台关注列表，请手动添加。
-          </p>
-          <div className="toolbar" style={{ marginBottom: "1rem" }}>
-            <button
-              type="button"
-              disabled={importing || busy}
-              onClick={() => {
-                void onImportFollowees();
-              }}
-            >
-              {importing ? <span className="spinner" /> : null}
-              从关注导入
-            </button>
-            <Link to="/sync/add" className="button secondary">
-              手动添加
-            </Link>
-            <button
-              type="button"
-              className="secondary"
-              disabled={busy}
-              onClick={() => {
-                void loadSubs().catch((e: unknown) =>
-                  setError(e instanceof Error ? e.message : String(e)),
-                );
-              }}
-            >
-              <IconRefresh width={16} height={16} />
-              刷新
-            </button>
-          </div>
-          <div className="table-wrap">
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>作者</th>
-                  <th>渠道</th>
-                  <th>同步作品</th>
-                  <th>自动录制</th>
-                  <th>最近在播</th>
-                  <th>错误</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {subs.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} className="muted">
-                      暂无订阅。可「从关注导入」或「手动添加」。
-                    </td>
-                  </tr>
-                ) : (
-                  subs.map((s) => (
-                    <tr key={s.id}>
-                      <td>
-                        <div>
-                          <strong>
-                            {s.displayName || s.username || s.authorId}
-                          </strong>
-                        </div>
-                        <div className="muted small">
-                          {s.username ? `@${s.username}` : s.authorId}
-                        </div>
-                      </td>
-                      <td>
-                        <span className="badge soft">{s.provider}</span>
-                      </td>
-                      <td>
-                        <button
-                          type="button"
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() => {
-                            void onToggleSyncWorks(s.id, !s.syncWorks);
-                          }}
-                        >
-                          {s.syncWorks ? "开" : "关"}
-                        </button>
-                      </td>
-                      <td>
+        <Card>
+          <CardContent>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+              <Typography variant="h6">订阅作者</Typography>
+              <Chip label={`${subs.length} 位`} size="small" variant="outlined" />
+            </Box>
+            <Typography variant="body2" color="text.disabled" sx={{ mb: 2 }}>可从各渠道「关注」导入。自动录制仅 otobanana 可开。</Typography>
+            <Box sx={{ display: "flex", gap: 1, mb: 2, flexWrap: "wrap" }}>
+              <Button variant="contained" color="primary" disabled={importing || busy} onClick={() => { void onImportFollowees(); }}
+                startIcon={importing ? <CircularProgress size={16} /> : null}>从关注导入</Button>
+              <Button variant="outlined" component={Link} to="/sync/add">手动添加</Button>
+              <Button variant="outlined" size="small" disabled={busy} onClick={() => { void loadSubs(); }} startIcon={<Refresh />}>刷新</Button>
+            </Box>
+
+            <Box sx={{ overflowX: "auto" }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow><TableCell>作者</TableCell><TableCell>渠道</TableCell><TableCell>同步作品</TableCell><TableCell>自动录制</TableCell><TableCell>最近在播</TableCell><TableCell>错误</TableCell><TableCell /></TableRow>
+                </TableHead>
+                <TableBody>
+                  {subs.length === 0 ? (
+                    <TableRow><TableCell colSpan={7} sx={{ color: "text.disabled" }}>暂无订阅。</TableCell></TableRow>
+                  ) : subs.map((s) => (
+                    <TableRow key={s.id}>
+                      <TableCell>
+                        <Typography sx={{ fontWeight: 600 }} variant="body2">{s.displayName || s.username || s.authorId}</Typography>
+                        <Typography variant="caption" color="text.disabled">{s.username ? `@${s.username}` : s.authorId}</Typography>
+                      </TableCell>
+                      <TableCell><Chip label={s.provider} size="small" variant="outlined" /></TableCell>
+                      <TableCell>
+                        <Button size="small" variant="outlined" disabled={busy} onClick={() => { void onToggle(s.id, "syncWorks", !s.syncWorks); }}>{s.syncWorks ? "开" : "关"}</Button>
+                      </TableCell>
+                      <TableCell>
                         {s.provider === "otobanana" ? (
-                          <button
-                            type="button"
-                            className="secondary"
-                            disabled={busy}
-                            onClick={() => {
-                              void onToggleLiveRecord(s.id, !s.enabled);
-                            }}
-                          >
-                            {s.enabled ? "开" : "关"}
-                          </button>
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
-                      </td>
-                      <td className="muted small">
-                        {s.lastOnairAt || s.lastRoomId ? (
-                          <>
-                            <div>{s.lastOnairAt || "—"}</div>
-                            {s.lastRoomId ? (
-                              <div title={s.lastRoomId}>
-                                {s.lastRoomId.slice(0, 28)}…
-                              </div>
-                            ) : null}
-                          </>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                      <td className="muted small">{s.lastError || "—"}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="secondary"
-                          disabled={busy}
-                          onClick={() => {
-                            void onDelete(s.id);
-                          }}
-                        >
-                          移除
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+                          <Button size="small" variant="outlined" disabled={busy} onClick={() => { void onToggle(s.id, "enabled", !s.enabled); }}>{s.enabled ? "开" : "关"}</Button>
+                        ) : <Typography variant="caption" color="text.disabled">—</Typography>}
+                      </TableCell>
+                      <TableCell><Typography variant="caption" color="text.disabled">{s.lastOnairAt || "—"}</Typography></TableCell>
+                      <TableCell><Typography variant="caption" color="text.disabled">{s.lastError || "—"}</Typography></TableCell>
+                      <TableCell><Button size="small" color="error" variant="outlined" disabled={busy} onClick={() => { void onDelete(s.id); }}>移除</Button></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+          </CardContent>
+        </Card>
       ) : (
         <>
-          <div className="page-header" style={{ marginBottom: "1rem" }}>
-            <div className="stat-pills">
-              <span className="badge soft">同步记录 {runs.length}</span>
-            </div>
-            <div className="toolbar">
-              <button
-                type="button"
-                disabled={syncing}
-                onClick={() => {
-                  setMsg(null);
-                  setError(null);
-                  setSyncing(true);
-                  void api
-                    .sync()
-                    .then(() => {
-                      setMsg(
-                        "已触发全量同步（收藏关且无作者同步的渠道会跳过）",
-                      );
-                      return loadRuns();
-                    })
-                    .catch((e: unknown) =>
-                      setError(e instanceof Error ? e.message : String(e)),
-                    )
-                    .finally(() => setSyncing(false));
-                }}
-              >
-                {syncing ? <span className="spinner" /> : null}
-                立即同步全部
-              </button>
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => void loadVod()}
-              >
-                <IconRefresh width={16} height={16} />
-                刷新
-              </button>
-            </div>
-          </div>
+          <Box sx={{ display: "flex", gap: 1, mb: 2, flexWrap: "wrap", alignItems: "center" }}>
+            <Chip label={`同步记录 ${runs.length}`} size="small" variant="outlined" />
+            <Button variant="contained" color="primary" disabled={syncing}
+              onClick={() => { setMsg(null); setError(null); setSyncing(true); void api.sync().then(() => { setMsg("已触发全量同步"); return loadRuns(); }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))).finally(() => setSyncing(false)); }}
+              startIcon={syncing ? <CircularProgress size={16} /> : null}>立即同步全部</Button>
+            <Button variant="outlined" size="small" onClick={() => { void loadVod(); }} startIcon={<Refresh />}>刷新</Button>
+          </Box>
 
-          <section className="card" style={{ marginBottom: "1rem" }}>
-            <div className="card-header">
-              <h2>按渠道收藏同步</h2>
-            </div>
-            <p className="muted small" style={{ marginBottom: "0.75rem" }}>
-              关闭后仅跳过该渠道的收藏夹同步；若「订阅作者」已开启「同步作品」，全量同步仍会拉取作者作品。不影响直播凭证与下载任务。
-            </p>
-            {providers.length === 0 ? (
-              <p className="muted">尚未配置 Provider 账号。</p>
-            ) : (
-              <div className="table-wrap">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>渠道</th>
-                      <th>收藏同步</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {providers.map((p) => (
-                      <tr key={p.id}>
-                        <td>
-                          <strong>{p.provider}</strong>
-                        </td>
-                        <td>
-                          <span
-                            className={
-                              p.favoriteSyncEnabled
-                                ? "badge queued"
-                                : "badge soft"
-                            }
-                          >
-                            {p.favoriteSyncEnabled ? "开启" : "关闭"}
-                          </span>
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="secondary"
-                            disabled={toggleId === p.id}
-                            onClick={() => {
-                              void onToggleFavoriteSync(p);
-                            }}
-                          >
-                            {p.favoriteSyncEnabled ? "关闭" : "开启"}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+          <Card sx={{ mb: 2 }}>
+            <CardContent>
+              <Typography variant="h6" gutterBottom>按渠道收藏同步</Typography>
+              <Typography variant="body2" color="text.disabled" sx={{ mb: 1 }}>关闭后仅跳过该渠道的收藏夹同步。</Typography>
+              {providers.length === 0 ? <Typography color="text.disabled">尚未配置 Provider。</Typography> : (
+                <Table size="small">
+                  <TableHead><TableRow><TableCell>渠道</TableCell><TableCell>收藏同步</TableCell><TableCell /></TableRow></TableHead>
+                  <TableBody>{providers.map((p) => (
+                    <TableRow key={p.id}>
+                      <TableCell><Typography sx={{ fontWeight: 600 }}>{p.provider}</Typography></TableCell>
+                      <TableCell><Chip label={p.favoriteSyncEnabled ? "开启" : "关闭"} size="small" color={p.favoriteSyncEnabled ? "warning" : "default"} /></TableCell>
+                      <TableCell><Button size="small" variant="outlined" disabled={toggleId === p.id} onClick={() => { void onToggleFavoriteSync(p); }}>{p.favoriteSyncEnabled ? "关闭" : "开启"}</Button></TableCell>
+                    </TableRow>
+                  ))}</TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
 
-          <section className="card">
-            <div className="card-header">
-              <h2>同步历史</h2>
-              <span className="muted small">约 4 秒自动刷新</span>
-            </div>
-            {runs.length === 0 ? (
-              <div className="empty-state">
-                <strong>还没有同步记录</strong>
-                <p>点击「立即同步全部」开始第一次收藏对账。</p>
-              </div>
-            ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Provider</th>
-                      <th>开始</th>
-                      <th>结束</th>
-                      <th>发现</th>
-                      <th>入队</th>
-                      <th>取消收藏标记</th>
-                      <th>错误</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {runs.map((r) => (
-                      <tr key={r.id}>
-                        <td>{r.id}</td>
-                        <td>{r.provider ?? "—"}</td>
-                        <td className="small">{r.startedAt}</td>
-                        <td className="small">{r.finishedAt ?? "…"}</td>
-                        <td>{r.discovered}</td>
-                        <td>{r.enqueued}</td>
-                        <td>{r.markedNotFavorite}</td>
-                        <td className="muted small">{r.error ?? "—"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
+          <Card>
+            <CardContent>
+              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+                <Typography variant="h6">同步历史</Typography>
+                <Typography variant="caption" color="text.disabled">约 4 秒自动刷新</Typography>
+              </Box>
+              {runs.length === 0 ? <Typography color="text.disabled">还没有同步记录。</Typography> : (
+                <Box sx={{ overflowX: "auto" }}>
+                  <Table size="small">
+                    <TableHead><TableRow><TableCell>ID</TableCell><TableCell>Provider</TableCell><TableCell>开始</TableCell><TableCell>结束</TableCell><TableCell>发现</TableCell><TableCell>入队</TableCell><TableCell>错误</TableCell></TableRow></TableHead>
+                    <TableBody>{runs.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell>{r.id}</TableCell><TableCell>{r.provider ?? "—"}</TableCell>
+                        <TableCell><Typography variant="caption">{r.startedAt}</Typography></TableCell>
+                        <TableCell><Typography variant="caption">{r.finishedAt ?? "…"}</Typography></TableCell>
+                        <TableCell>{r.discovered}</TableCell><TableCell>{r.enqueued}</TableCell>
+                        <TableCell><Typography variant="caption" color="text.disabled">{r.error ?? "—"}</Typography></TableCell>
+                      </TableRow>
+                    ))}</TableBody>
+                  </Table>
+                </Box>
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
-    </div>
+    </Box>
   );
 }

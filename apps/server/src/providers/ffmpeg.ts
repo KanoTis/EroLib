@@ -48,11 +48,6 @@ export async function ensureFfmpeg(): Promise<string> {
   );
 }
 
-/** Test-only: clear cached path. */
-export function resetFfmpegCache(): void {
-  cachedFfmpeg = undefined;
-}
-
 /**
  * Transcode input media (e.g. MPEG-TS) to MP3 via libmp3lame.
  * Uses spawn argv array — never shell interpolation.

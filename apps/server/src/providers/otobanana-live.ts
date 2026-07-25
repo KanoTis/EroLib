@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { DEFAULT_UA } from "./types.js";
+import { mapPool } from "../lib/utils.js";
 
 const AUTH_BASE = "https://otobanana.com";
 const API_BASE = "https://api.v2.otobanana.com";
@@ -176,27 +177,6 @@ function mapRoom(raw: z.infer<typeof OnairRoomRaw>): OnairRoom | null {
     roomOpenAt: raw.room_open_at ?? null,
     roomCloseAt: raw.room_close_at ?? null,
   };
-}
-
-async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let idx = 0;
-  const runners = Array.from(
-    { length: Math.min(concurrency, Math.max(items.length, 1)) },
-    async () => {
-      while (idx < items.length) {
-        const current = idx;
-        idx += 1;
-        out[current] = await worker(items[current]!);
-      }
-    },
-  );
-  await Promise.all(runners);
-  return out;
 }
 
 export function looksLikeUuid(input: string): boolean {

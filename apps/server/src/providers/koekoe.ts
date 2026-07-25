@@ -1,4 +1,3 @@
-import { copyFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 import type {
   DownloadProgress,
@@ -8,14 +7,16 @@ import type {
   Session,
   WorkMetadata,
 } from "@erolib/shared";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   fetchToFile,
   getSetCookieHeaders,
   mergeCookieHeader,
-  sleep,
 } from "./download-utils.js";
+import { decodeHtmlEntities, stripTags } from "../lib/html.js";
 import type { Provider } from "./types.js";
 import { DEFAULT_UA, sessionData } from "./types.js";
+import { renameOrCopy } from "../storage/paths.js";
 
 const BASE = "https://koe-koe.com";
 const FILE_BASE = "https://file.koe-koe.com";
@@ -28,15 +29,6 @@ function audioUrlForId(id: string): string {
 function detailUrl(id: string): string {
   return `${BASE}/detail.php?n=${encodeURIComponent(id)}`;
 }
-async function renameSafe(src: string, dest: string): Promise<void> {
-  try {
-    await rename(src, dest);
-  } catch {
-    await copyFile(src, dest);
-    await rm(src, { force: true });
-  }
-}
-
 function requireCookie(session: Session): string {
   const { cookieHeader } = sessionData(session);
   if (!cookieHeader) throw new Error("Missing Koe-koe cookie session");
@@ -112,30 +104,9 @@ const TITLE_NOISE = [
   /^コエコエ/,
 ];
 
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&nbsp;/gi, " ")
-    .replace(/&amp;/gi, "&")
-    .replace(/&lt;/gi, "<")
-    .replace(/&gt;/gi, ">")
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;/gi, "'");
-}
-
-function stripTags(html: string): string {
-  return decodeEntities(
-    html
-      .replace(/<script[\s\S]*?<\/script>/gi, " ")
-      .replace(/<style[\s\S]*?<\/style>/gi, " ")
-      .replace(/<[^>]+>/g, " "),
-  )
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
 /** Keep hard line breaks from <br>/<p>; collapse other whitespace. */
 function stripTagsPreserveNewlines(html: string): string {
-  return decodeEntities(
+  return decodeHtmlEntities(
     html
       .replace(/<script[\s\S]*?<\/script>/gi, " ")
       .replace(/<style[\s\S]*?<\/style>/gi, " ")
@@ -701,7 +672,7 @@ function pickListCardTitle(window: string, workId: string): string | undefined {
     /\btitle=["']「([^"']+)」の投稿["']/i.exec(window) ??
     /\btitle=["']([^"']+)["']/i.exec(window);
   if (attr?.[1]) {
-    let t = decodeEntities(attr[1]).trim();
+    let t = decodeHtmlEntities(attr[1]).trim();
     // 「黒猫(女性)/実タイトル」 or bare 「タイトル」
     const gendered = /^[\s\S]*?\((?:女性|男性|カップル)\)\/([\s\S]+)$/u.exec(t);
     if (gendered?.[1]) {
@@ -1002,7 +973,7 @@ export const koekoeProvider: Provider = {
     });
     const audioExt = audio.ext === "bin" ? "mp3" : audio.ext;
     const audioFinal = path.join(cacheDir, `audio.${audioExt}`);
-    await renameSafe(audio.path, audioFinal);
+    await renameOrCopy(audio.path, audioFinal);
 
     let coverPath: string | null = null;
     if (work.coverUrl) {
@@ -1014,7 +985,7 @@ export const koekoeProvider: Provider = {
         });
         const coverExt = cover.ext === "bin" ? "png" : cover.ext;
         coverPath = path.join(cacheDir, `cover.${coverExt}`);
-        await renameSafe(cover.path, coverPath);
+        await renameOrCopy(cover.path, coverPath);
       } catch {
         coverPath = null;
       }

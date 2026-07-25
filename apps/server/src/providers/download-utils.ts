@@ -8,12 +8,6 @@ import { pipeline } from "node:stream/promises";
 import type { DownloadProgress } from "@erolib/shared";
 import { DEFAULT_UA } from "./types.js";
 
-export async function sleep(ms: number): Promise<void> {
-  const { promise, resolve } = Promise.withResolvers<void>();
-  setTimeout(resolve, ms);
-  return promise;
-}
-
 export function extFromUrlOrType(
   url: string,
   contentType?: string | null,

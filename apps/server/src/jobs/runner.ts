@@ -1,5 +1,4 @@
-import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
-import { copyFile, rename, rm } from "node:fs/promises";
+import { and, eq, inArray } from "drizzle-orm";
 import path from "node:path";
 import type { ProviderId, WorkStatus } from "@erolib/shared";
 import type { AppConfig } from "../config.js";
@@ -24,10 +23,12 @@ import {
   isLocalAudioAvailable,
   mediaWorkDir,
   pathExists,
+  renameOrCopy,
   resolveAuthorId,
   writeJsonAtomic,
 } from "../storage/paths.js";
 
+import { nowSql } from "../lib/utils.js";
 import { fetchToFile } from "../providers/download-utils.js";
 
 export interface JobRunner {
@@ -39,10 +40,6 @@ export interface JobRunner {
     provider: ProviderId,
     workId: string,
   ): Promise<{ ok: true; warning?: string }>;
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
 }
 
 export function createJobRunner(
@@ -542,15 +539,6 @@ export function createJobRunner(
     kickDownloads();
   }
 
-  async function renameSafeLocal(src: string, dest: string): Promise<void> {
-    try {
-      await rename(src, dest);
-    } catch {
-      await copyFile(src, dest);
-      await rm(src, { force: true });
-    }
-  }
-
   async function refreshWorkMetadata(
     providerId: ProviderId,
     workId: string,
@@ -609,7 +597,7 @@ export function createJobRunner(
         const coverExt = cover.ext === "bin" ? "jpg" : cover.ext;
         const coverFinal = media.cover(coverExt);
         try {
-          await renameSafeLocal(cover.path, coverFinal);
+          await renameOrCopy(cover.path, coverFinal);
         } catch {
           // leave missing cover
         }
@@ -702,7 +690,3 @@ export function createJobRunner(
   };
 }
 
-// silence unused imports if tree-shake complains in some configs
-void desc;
-void ne;
-void sql;
