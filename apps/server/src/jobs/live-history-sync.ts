@@ -13,6 +13,7 @@ import {
   resolveSelfAuthorId,
 } from "../providers/otobanana-live.js";
 import { sessionData } from "../providers/types.js";
+import { nowSql } from "../lib/utils.js";
 
 const PROVIDER = "otobanana" as const;
 /** Default: 30 minutes — keep official API load low. */
@@ -34,10 +35,6 @@ export interface LiveHistorySyncer {
     lastError: string | null;
     syncing: boolean;
   }>;
-}
-
-function nowSql(): string {
-  return new Date().toISOString().replace("T", " ").replace(/\.\d{3}Z$/, "");
 }
 
 async function upsertSetting(

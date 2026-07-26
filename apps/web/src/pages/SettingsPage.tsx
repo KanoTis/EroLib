@@ -20,14 +20,16 @@ export function SettingsPage() {
   const isLight = mode === "light";
   const [settings, setSettings] = useState<SettingsPublic | null>(null);
   const [hours, setHours] = useState(4);
+  const [recentDays, setRecentDays] = useState(7);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savingRecentDays, setSavingRecentDays] = useState(false);
   const [historySyncing, setHistorySyncing] = useState(false);
   const [historyMeta, setHistoryMeta] = useState<{ syncedAt: string | null; lastError: string | null; syncing: boolean } | null>(null);
 
   useEffect(() => {
-    void api.settings().then((s) => { setSettings(s); setHours(s.syncIntervalHours); })
+    void api.settings().then((s) => { setSettings(s); setHours(s.syncIntervalHours); setRecentDays(s.recentDays); })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
     void api.liveFolloweeHistory().then((h) =>
       setHistoryMeta({ syncedAt: h.syncedAt, lastError: h.lastError, syncing: h.syncing })
@@ -85,6 +87,30 @@ export function SettingsPage() {
                   .finally(() => setSaving(false));
               }}>
               {saving && <CircularProgress size={16} sx={{ mr: 1 }} />}保存
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {settings && (
+        <Card sx={{ mb: 2 }}>
+          <CardContent>
+            <Typography variant="h6" gutterBottom>最近入库</Typography>
+            <TextField
+              label="展示时间范围（天）" type="number" value={recentDays}
+              onChange={(e) => setRecentDays(Number(e.target.value))}
+              slotProps={{ htmlInput: { min: 0, max: 365 } }}
+              helperText="媒体库页顶部“最近入库”只展示该天数内发布的内容；0 表示不限制。" sx={{ mb: 2 }}
+            />
+            <Button variant="contained" color="primary" disabled={savingRecentDays}
+              onClick={() => {
+                setSavingRecentDays(true); setError(null); setMsg(null);
+                void api.updateSettings({ recentDays })
+                  .then(() => setMsg("已保存"))
+                  .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setSavingRecentDays(false));
+              }}>
+              {savingRecentDays && <CircularProgress size={16} sx={{ mr: 1 }} />}保存
             </Button>
           </CardContent>
         </Card>

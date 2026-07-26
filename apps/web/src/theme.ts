@@ -17,6 +17,8 @@ const ASMR = {
   playerBarDark: "#212121",
   /** Light player bar — near white surface */
   playerBarLight: "#ffffff",
+  /** Quasar secondary teal — asmr.one's "currently playing" highlight (bg-teal), scoped to player-queue UI only */
+  playerAccent: "#26A69A",
 } as const;
 
 const sharedTypography = {

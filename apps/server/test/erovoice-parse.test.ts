@@ -180,6 +180,26 @@ describe("erovoice parseDetailHtml", () => {
     assert.ok(meta.description && !meta.description.includes("抜いた報告"));
   });
 
+  it("parses postTime as an absolute publish date", () => {
+    const html = `
+      <html><head><meta property="og:title" content="タイトル" /></head><body>
+        <h1>タイトル</h1>
+        <section id="voiceInfos" class="cf">
+          <ul class="voiceInfoList">
+            <li class="postTime">2026/7/26</li>
+            <li class="postView" data-postid="8082">49</li>
+          </ul>
+        </section>
+      </body></html>
+    `;
+    const meta = parseDetailHtml(
+      html,
+      "8082",
+      "https://erovoice-ch.com/ero-voice/8082.html",
+    );
+    assert.equal(meta.createdAt, "2026-07-26");
+  });
+
   it("falls back to og:description when discContent is missing", () => {
     const html = `
       <html><head>

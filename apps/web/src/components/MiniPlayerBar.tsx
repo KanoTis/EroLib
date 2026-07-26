@@ -1,12 +1,12 @@
 import { Paper, IconButton, Typography, Box } from "@mui/material";
-import { PlayArrow, Pause } from "@mui/icons-material";
+import { PlayArrow, Pause, SkipPrevious, SkipNext } from "@mui/icons-material";
 import { usePlayer } from "../player/PlayerContext";
 import { useThemeMode } from "../ThemeContext";
 import { ASMR } from "../theme";
 import { CoverImage } from "./CoverImage";
 
 export function MiniPlayerBar({ onExpand }: { onExpand: () => void }) {
-  const { track, status, currentTime, duration, toggle } = usePlayer();
+  const { track, status, currentTime, duration, toggle, next, previous, hasNext, hasPrevious } = usePlayer();
   const { mode } = useThemeMode();
   const isLight = mode === "light";
 
@@ -40,7 +40,7 @@ export function MiniPlayerBar({ onExpand }: { onExpand: () => void }) {
 
       <Box
         onClick={onExpand}
-        sx={{ display: "flex", alignItems: "center", px: 1.5, py: 0.75, cursor: "pointer", minHeight: 60 }}
+        sx={{ display: "flex", alignItems: "center", px: 1.5, py: 0.75, cursor: "pointer", minHeight: 60, gap: 0.5 }}
       >
         <Box
           sx={{
@@ -51,7 +51,7 @@ export function MiniPlayerBar({ onExpand }: { onExpand: () => void }) {
             overflow: "hidden",
             border: "1px solid",
             borderColor: "divider",
-            mr: 1.5,
+            mr: 1,
           }}
         >
           <CoverImage
@@ -76,11 +76,31 @@ export function MiniPlayerBar({ onExpand }: { onExpand: () => void }) {
         </Box>
 
         <IconButton
+          onClick={(e) => { e.stopPropagation(); previous(); }}
+          disabled={!hasPrevious}
+          size="small"
+          aria-label="上一曲"
+          sx={{ display: { xs: "none", sm: "inline-flex" } }}
+        >
+          <SkipPrevious fontSize="small" />
+        </IconButton>
+
+        <IconButton
           onClick={(e) => { e.stopPropagation(); toggle(); }}
           color="primary"
           aria-label={isPlaying ? "暂停" : "播放"}
         >
           {isPlaying ? <Pause /> : <PlayArrow />}
+        </IconButton>
+
+        <IconButton
+          onClick={(e) => { e.stopPropagation(); next(); }}
+          disabled={!hasNext}
+          size="small"
+          aria-label="下一曲"
+          sx={{ display: { xs: "none", sm: "inline-flex" } }}
+        >
+          <SkipNext fontSize="small" />
         </IconButton>
       </Box>
     </Paper>

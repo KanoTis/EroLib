@@ -77,6 +77,7 @@ import {
 } from "./providers/otobanana-live.js";
 import { sessionData } from "./providers/types.js";
 import { liveMediaDir, mediaWorkDir, pathExists } from "./storage/paths.js";
+import { isRecord, nowSql } from "./lib/utils.js";
 import type { ProviderAuth, Session } from "@erolib/shared";
 
 export interface AppDeps {
@@ -174,8 +175,8 @@ function parseMetaJson(metaJson: string | null): Record<string, unknown> | null 
   if (!metaJson) return null;
   try {
     const parsed: unknown = JSON.parse(metaJson);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
+    if (isRecord(parsed)) {
+      return parsed;
     }
   } catch {
     // ignore
@@ -205,8 +206,8 @@ function publishedAtFromMeta(metaJson: string | null): string | null {
     return parsed.createdAt.trim();
   }
   const extra = parsed.extra;
-  if (extra && typeof extra === "object" && !Array.isArray(extra)) {
-    const raw = (extra as Record<string, unknown>).postedAtRaw;
+  if (isRecord(extra)) {
+    const raw = extra.postedAtRaw;
     if (typeof raw === "string" && raw.trim()) {
       return raw.trim().replace(/^@/, "");
     }
@@ -366,6 +367,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       syncIntervalHours: Number(
         map.get("syncIntervalHours") ?? config.syncIntervalHours,
       ),
+      recentDays: Number(map.get("recentDays") ?? 7),
       dataDir: config.dataDir,
       mediaDir: config.mediaDir,
       cacheDir: config.cacheDir,
@@ -380,6 +382,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     const parsed = z
       .object({
         syncIntervalHours: z.number().int().min(1).max(168).optional(),
+        recentDays: z.number().int().min(0).max(365).optional(),
       })
       .safeParse(body);
     if (!parsed.success) return c.json({ error: "Invalid body" }, 400);
@@ -395,6 +398,15 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
           set: { value: String(parsed.data.syncIntervalHours) },
         });
       config.syncIntervalHours = parsed.data.syncIntervalHours;
+    }
+    if (parsed.data.recentDays !== undefined) {
+      await db
+        .insert(settings)
+        .values({ key: "recentDays", value: String(parsed.data.recentDays) })
+        .onConflictDoUpdate({
+          target: settings.key,
+          set: { value: String(parsed.data.recentDays) },
+        });
     }
     return c.json({ ok: true });
   });
@@ -1130,10 +1142,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       );
     }
 
-    const now = new Date()
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d{3}Z$/, "");
+    const now = nowSql();
 
     try {
       let authorId: string;
@@ -1216,10 +1225,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
 
   /** Import platform followees into subscription list (flags default off). */
   app.post("/api/live/subscriptions/import-followees", async (c) => {
-    const now = new Date()
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d{3}Z$/, "");
+    const now = nowSql();
     const results: SubscriptionImportProviderResult[] = [];
     let totalImported = 0;
 
@@ -1432,10 +1438,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       return c.json({ error: "自动录制仅支持 otobanana" }, 400);
     }
 
-    const now = new Date()
-      .toISOString()
-      .replace("T", " ")
-      .replace(/\.\d{3}Z$/, "");
+    const now = nowSql();
     await db
       .update(liveSubscriptions)
       .set({
@@ -1603,56 +1606,6 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     void historySyncer.syncNow();
     const status = await historySyncer.getStatus();
     return c.json({ ok: true, ...status });
-  });
-
-  app.post("/api/live/followees/:authorId/select", async (c) => {
-    const authorId = c.req.param("authorId");
-    if (!authorId) return c.json({ error: "authorId required" }, 400);
-    let token: string | null = null;
-    try {
-      const session = await ensureOtobananaSession();
-      token = sessionData(session).accessToken ?? null;
-    } catch {
-      // optional
-    }
-    try {
-      const author = await resolveAuthorByInput(authorId, token);
-      const now = new Date()
-        .toISOString()
-        .replace("T", " ")
-        .replace(/\.\d{3}Z$/, "");
-      try {
-        await db.insert(liveSubscriptions).values({
-          provider: "otobanana",
-          authorId: author.authorId,
-          username: author.username,
-          displayName: author.displayName,
-          enabled: true,
-          // Followee select is live-oriented; do not surprise-download VOD.
-          syncWorks: false,
-          createdAt: now,
-          updatedAt: now,
-        });
-      } catch {
-        // already selected — treat as success
-      }
-      const [row] = await db
-        .select()
-        .from(liveSubscriptions)
-        .where(
-          and(
-            eq(liveSubscriptions.provider, "otobanana"),
-            eq(liveSubscriptions.authorId, author.authorId),
-          ),
-        )
-        .limit(1);
-      if (!row) return c.json({ error: "Failed to select author" }, 500);
-      await livePoller.pollNow();
-      return c.json(toLiveSubscription(row));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return c.json({ error: message }, 400);
-    }
   });
 
   /** Resolve path under mediaDir; null if traversal would escape the root. */
@@ -1896,13 +1849,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     const root = config.webDistDir.replace(/\\/g, "/");
     app.use(
       "/*",
-      serveStatic({
-        root,
-        rewriteRequestPath: (p) => {
-          if (p.startsWith("/api")) return p;
-          return p;
-        },
-      }),
+      serveStatic({ root }),
     );
     app.get("*", async (c) => {
       if (c.req.path.startsWith("/api")) {

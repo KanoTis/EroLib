@@ -14,7 +14,7 @@ import { Menu, ArrowBackIosNew, Search } from "@mui/icons-material";
 import { SidebarContent } from "./Sidebar";
 import { PcPlayerPanel } from "./PcPlayerPanel";
 import { MiniPlayerBar } from "./MiniPlayerBar";
-import { FullScreenPlayer } from "./FullScreenPlayer";
+import { MobilePlayerSheet } from "./MobilePlayerSheet";
 import { usePlayer } from "../player/PlayerContext";
 import { useThemeMode } from "../ThemeContext";
 import { ASMR } from "../theme";
@@ -268,7 +268,7 @@ export function Layout({
       </Box>
 
       {isMobile && <MiniPlayerBar onExpand={() => setFullPlayerOpen(true)} />}
-      {isMobile && <FullScreenPlayer open={fullPlayerOpen} onClose={() => setFullPlayerOpen(false)} />}
+      {isMobile && <MobilePlayerSheet open={fullPlayerOpen} onClose={() => setFullPlayerOpen(false)} />}
     </Box>
   );
 }

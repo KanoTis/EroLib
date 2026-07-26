@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Box, Button, Card, CardContent, CardActions,
@@ -12,18 +12,14 @@ import { api } from "../api";
 import { CoverImage } from "../components/CoverImage";
 import { AuthorLink } from "../components/AuthorLink";
 import { EmptyState } from "../components/EmptyState";
+import { formatDuration, liveToTrack, MetaRow, providerLabel, publishTimestamp, workToTrack } from "../components/LibraryMeta";
+import { RecentlyAddedRail, type RecentRailItem } from "../components/RecentlyAddedRail";
 import { usePlayer } from "../player/PlayerContext";
 import { ASMR } from "../theme";
 import { useThemeMode } from "../ThemeContext";
 
 const STATUS_LABEL: Record<string, string> = {
   downloaded: "已下载", queued: "队列中", downloading: "下载中", failed: "失败", discovered: "已发现",
-};
-
-const PROVIDER_LABEL: Record<string, string> = {
-  otobanana: "Otobanana",
-  koekoe: "Koe-koe",
-  erovoice: "Erovoice",
 };
 
 type LibraryViewMode = "small" | "standard" | "list";
@@ -35,26 +31,15 @@ type LibraryItem =
 const VIEW_MODE_KEY = "erolib.library.viewMode";
 const PAGE_SIZE = 50;
 const API_MAX_LIMIT = 200;
+const RECENT_FETCH_LIMIT = 200;
+const RECENT_RAIL_SIZE = 60;
+const DEFAULT_RECENT_DAYS = 7;
 
 function readViewMode(): LibraryViewMode {
   try { const raw = localStorage.getItem(VIEW_MODE_KEY); if (raw === "small" || raw === "standard" || raw === "list") return raw; } catch {}
   return "standard";
 }
 function parseKind(raw: string | null): KindFilter { if (raw === "vod" || raw === "live" || raw === "all") return raw; return "all"; }
-
-function formatDuration(seconds: number | null | undefined): string {
-  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return "—";
-  const total = Math.floor(seconds);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
-}
-
-function providerLabel(id: string): string {
-  return PROVIDER_LABEL[id] ?? id;
-}
 
 async function fetchUpToCount<T>(fetchPage: (limit: number, offset: number) => Promise<T[]>, targetCount: number): Promise<{ items: T[]; hasMore: boolean }> {
   const target = Math.max(PAGE_SIZE, targetCount);
@@ -70,41 +55,6 @@ async function fetchUpToCount<T>(fetchPage: (limit: number, offset: number) => P
   }
   return { items, hasMore: false };
 }
-
-/** asmr.one-style meta: value / value / value */
-function MetaRow({ parts }: { parts: ReactNode[] }) {
-  const items = parts.filter((p) => p != null && p !== false && p !== "");
-  return (
-    <Box
-      sx={{
-        display: "flex",
-        flexWrap: "wrap",
-        alignItems: "center",
-        columnGap: 1,
-        rowGap: 0.25,
-        color: "text.secondary",
-        fontSize: "0.8125rem",
-        lineHeight: 1.4,
-        minWidth: 0,
-      }}
-    >
-      {items.map((part, i) => (
-        <Box key={i} component="span" sx={{ display: "contents" }}>
-          {i > 0 && (
-            <Box component="span" sx={{ opacity: 0.55, flexShrink: 0 }}>/</Box>
-          )}
-          <Box
-            component="span"
-            sx={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-          >
-            {part}
-          </Box>
-        </Box>
-      ))}
-    </Box>
-  );
-}
-
 
 export function LibraryPage() {
   const { play } = usePlayer();
@@ -125,6 +75,9 @@ export function LibraryPage() {
   const [vodHasMore, setVodHasMore] = useState(false);
   const [liveHasMore, setLiveHasMore] = useState(false);
   const [viewMode, setViewMode] = useState<LibraryViewMode>(readViewMode);
+  const [recentWorks, setRecentWorks] = useState<WorkPublic[]>([]);
+  const [recentLive, setRecentLive] = useState<LiveMediaPublic[]>([]);
+  const [recentDays, setRecentDays] = useState(DEFAULT_RECENT_DAYS);
   const requestIdRef = useRef(0);
 
   const wantVod = kind === "all" || kind === "vod";
@@ -132,10 +85,12 @@ export function LibraryPage() {
   const showLoadMore = (wantVod && vodHasMore) || (wantLive && liveHasMore);
 
   function playVod(w: WorkPublic): void {
-    play({ id: `vod:${w.provider}:${w.workId}`, kind: "vod", provider: w.provider, mediaId: w.workId, title: w.title, subtitle: w.authorName ?? w.authorId ?? undefined, src: api.audioUrl(w.provider, w.workId), artworkUrl: w.coverPath ? api.coverUrl(w.provider, w.workId) : null });
+    const queue = works.filter((x) => x.status === "downloaded").map(workToTrack);
+    play(workToTrack(w), queue);
   }
   function playLive(m: LiveMediaPublic, title: string): void {
-    play({ id: `live:${m.provider}:${m.roomId}`, kind: "live", provider: m.provider, mediaId: m.roomId, title, subtitle: m.authorName ?? m.authorId ?? undefined, src: api.liveAudioUrl(m.provider, m.roomId) });
+    const queue = liveItems.map((x) => liveToTrack(x, x.title || x.roomId));
+    play(liveToTrack(m, title), queue);
   }
   async function deleteLive(m: LiveMediaPublic): Promise<void> {
     if (!confirm(`删除直播录制「${m.title || m.roomId}」？`)) return;
@@ -190,11 +145,62 @@ export function LibraryPage() {
   useEffect(() => { void loadInitial(); }, [kind]);
   useEffect(() => { const next = parseKind(searchParams.get("type")); if (next !== kind) setKind(next); }, [searchParams, kind]);
 
+  // Independent of the filters above — always reflects the whole library's newest arrivals.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [w, l, s] = await Promise.all([
+          api.works({ status: "downloaded", limit: RECENT_FETCH_LIMIT }),
+          api.liveMedia({ limit: RECENT_FETCH_LIMIT }),
+          api.settings().catch(() => null),
+        ]);
+        if (!cancelled) {
+          setRecentWorks(w); setRecentLive(l);
+          if (s) setRecentDays(s.recentDays);
+        }
+      } catch {
+        // Decorative widget only — main library list below loads independently.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const items = useMemo((): LibraryItem[] => {
     const v: LibraryItem[] = works.map((w) => ({ kind: "vod", key: `vod:${w.provider}:${w.workId}`, sortAt: w.updatedAt || w.createdAt, work: w }));
     const l: LibraryItem[] = liveItems.map((m) => ({ kind: "live", key: `live:${m.provider}:${m.roomId}`, sortAt: m.updatedAt || m.recordedAt || m.createdAt, media: m }));
     return [...v, ...l].sort((a, b) => b.sortAt.localeCompare(a.sortAt));
   }, [works, liveItems]);
+
+  const recentItems = useMemo((): RecentRailItem[] => {
+    const merged: { at: string; item: RecentRailItem }[] = [
+      ...recentWorks.map((w) => ({
+        at: w.downloadedAt ?? w.createdAt,
+        item: {
+          key: `vod:${w.provider}:${w.workId}`, kind: "vod" as const, provider: w.provider, mediaId: w.workId,
+          title: w.title, authorName: w.authorName, coverPath: w.coverPath, publishedAt: w.publishedAt,
+          onPlay: () => play(workToTrack(w), recentWorks.map(workToTrack)),
+        },
+      })),
+      ...recentLive.map((m) => {
+        const title = m.title || m.roomId;
+        return {
+          at: m.createdAt,
+          item: {
+            key: `live:${m.provider}:${m.roomId}`, kind: "live" as const, provider: m.provider, mediaId: m.roomId,
+            title, authorName: m.authorName, coverPath: null, publishedAt: m.recordedAt,
+            onPlay: () => play(liveToTrack(m, title), recentLive.map((x) => liveToTrack(x, x.title || x.roomId))),
+          },
+        };
+      }),
+    ];
+    const cutoff = recentDays > 0 ? Date.now() - recentDays * 86_400_000 : null;
+    const inRange = cutoff === null ? merged : merged.filter(({ item }) => {
+      const t = publishTimestamp(item.publishedAt);
+      return t !== null && t >= cutoff;
+    });
+    return inRange.sort((a, b) => b.at.localeCompare(a.at)).slice(0, RECENT_RAIL_SIZE).map((e) => e.item);
+  }, [recentWorks, recentLive, recentDays, play]);
 
   const isList = viewMode === "list";
   const listSurface = isLight ? "#fff" : ASMR.drawerDark;
@@ -206,6 +212,8 @@ export function LibraryPage() {
         <Typography variant="h4">媒体库</Typography>
         <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>浏览已备份点播与直播录制。</Typography>
       </Box>
+
+      <RecentlyAddedRail items={recentItems} days={recentDays} />
 
       <Box sx={{ display: "flex", gap: 1, mb: 2, flexWrap: "wrap", alignItems: "center" }}>
         <TextField size="small" placeholder="搜索标题 / 作者" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void loadInitial(); }} sx={{ minWidth: 180 }} />

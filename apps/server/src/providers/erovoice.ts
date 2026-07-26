@@ -407,6 +407,11 @@ export function parseDetailHtml(
 
   const audioUrl = `${THEME_LIBS}/getm3u8file_origints.php?id=${encodeURIComponent(workId)}`;
 
+  const dateM = /class=["'][^"']*postTime[^"']*["'][^>]*>\s*(\d{4})\/(\d{1,2})\/(\d{1,2})/i.exec(html);
+  const createdAt = dateM
+    ? `${dateM[1]}-${dateM[2]!.padStart(2, "0")}-${dateM[3]!.padStart(2, "0")}`
+    : null;
+
   return {
     provider: "erovoice",
     workId,
@@ -419,6 +424,7 @@ export function parseDetailHtml(
     coverUrl,
     sourceUrl,
     tags: tags.length ? tags : undefined,
+    createdAt,
     extra: category ? { category } : {},
   };
 }

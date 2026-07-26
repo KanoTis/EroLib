@@ -148,6 +148,8 @@ export interface SyncRunPublic {
 
 export interface SettingsPublic {
   syncIntervalHours: number;
+  /** Library page "最近入库" rail: only show items published within this many days. 0 = unlimited. */
+  recentDays: number;
   dataDir: string;
   mediaDir: string;
   cacheDir: string;

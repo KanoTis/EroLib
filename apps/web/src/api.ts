@@ -2,7 +2,6 @@ import type {
   AuthorPublic,
   AuthorSearchHit,
   DownloadJobPublic,
-  HealthResponse,
   LiveFolloweeHistoryPublic,
   LiveMediaPublic,
   LiveOnairPublic,
@@ -48,7 +47,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => request<HealthResponse>("/api/health"),
   authStatus: () =>
     request<{
       authEnabled: boolean;
@@ -63,7 +61,7 @@ export const api = {
   logout: () =>
     request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }),
   settings: () => request<SettingsPublic>("/api/settings"),
-  updateSettings: (body: { syncIntervalHours?: number }) =>
+  updateSettings: (body: { syncIntervalHours?: number; recentDays?: number }) =>
     request<{ ok: boolean }>("/api/settings", {
       method: "PUT",
       body: JSON.stringify(body),
@@ -175,11 +173,6 @@ export const api = {
       lastError: string | null;
       syncing: boolean;
     }>("/api/live/followees/history/sync", { method: "POST" }),
-  selectLiveFollowee: (authorId: string) =>
-    request<LiveSubscriptionPublic>(
-      `/api/live/followees/${encodeURIComponent(authorId)}/select`,
-      { method: "POST" },
-    ),
   liveJobs: () => request<LiveRecordJobPublic[]>("/api/live/jobs"),
   deleteLiveJob: (id: number) =>
     request<{ ok: boolean }>(`/api/live/jobs/${id}`, { method: "DELETE" }),

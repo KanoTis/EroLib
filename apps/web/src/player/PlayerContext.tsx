@@ -24,12 +24,21 @@ export type PlayerContextValue = {
   volume: number;
   muted: boolean;
   error: string | null;
-  play: (track: PlayableTrack) => void;
+  queue: PlayableTrack[];
+  queueIndex: number;
+  hasNext: boolean;
+  hasPrevious: boolean;
+  /** Pass a `queue` to enable next()/previous(); omit for a single-track play (queue = [track]). */
+  play: (track: PlayableTrack, queue?: PlayableTrack[]) => void;
   toggle: () => void;
   seek: (time: number) => void;
   setVolume: (v: number) => void;
   setMuted: (m: boolean) => void;
   stop: () => void;
+  next: () => void;
+  previous: () => void;
+  /** Jump to an arbitrary index within the current queue (used by the queue popover). */
+  playAt: (index: number) => void;
 };
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
@@ -55,6 +64,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const trackRef = useRef<PlayableTrack | null>(null);
   const seekQuietUntilRef = useRef(0);
+  const queueRef = useRef<PlayableTrack[]>([]);
+  const queueIndexRef = useRef(-1);
 
   const [track, setTrack] = useState<PlayableTrack | null>(null);
   const [status, setStatus] = useState<PlayerStatus>("idle");
@@ -63,8 +74,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [volume, setVolumeState] = useState(1);
   const [muted, setMutedState] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [queue, setQueue] = useState<PlayableTrack[]>([]);
+  const [queueIndex, setQueueIndex] = useState(-1);
 
   trackRef.current = track;
+  queueRef.current = queue;
+  queueIndexRef.current = queueIndex;
 
   const seek = useCallback((time: number) => {
     const audio = audioRef.current;
@@ -120,10 +135,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setCurrentTime(0);
     setDuration(0);
     setError(null);
+    setQueue([]);
+    setQueueIndex(-1);
+    queueRef.current = [];
+    queueIndexRef.current = -1;
     clearMediaSession();
   }, []);
 
-  const play = useCallback((next: PlayableTrack) => {
+  /** Starts playback of `next`, resuming in place if it's already the loaded track. Does not touch queue state. */
+  const startTrack = useCallback((next: PlayableTrack) => {
     const audio = audioRef.current;
     if (!audio) return;
 
@@ -157,6 +177,45 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setError("无法播放");
     });
   }, []);
+
+  const play = useCallback(
+    (next: PlayableTrack, queueArg?: PlayableTrack[]) => {
+      const q = queueArg && queueArg.length > 0 ? queueArg : [next];
+      const idx = q.findIndex((t) => t.id === next.id);
+      const safeIdx = idx >= 0 ? idx : 0;
+      setQueue(q);
+      setQueueIndex(safeIdx);
+      queueRef.current = q;
+      queueIndexRef.current = safeIdx;
+      startTrack(next);
+    },
+    [startTrack],
+  );
+
+  const playAt = useCallback(
+    (index: number) => {
+      const q = queueRef.current;
+      if (index < 0 || index >= q.length) return;
+      const t = q[index]!;
+      setQueueIndex(index);
+      queueIndexRef.current = index;
+      startTrack(t);
+    },
+    [startTrack],
+  );
+
+  const next = useCallback(() => {
+    const q = queueRef.current;
+    const idx = queueIndexRef.current;
+    if (idx < 0 || idx >= q.length - 1) return;
+    playAt(idx + 1);
+  }, [playAt]);
+
+  const previous = useCallback(() => {
+    const idx = queueIndexRef.current;
+    if (idx <= 0) return;
+    playAt(idx - 1);
+  }, [playAt]);
 
   const setVolume = useCallback((v: number) => {
     const audio = audioRef.current;
@@ -247,9 +306,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setMediaSessionPlaybackState("playing");
     };
     const onEnded = () => {
-      setStatus("paused");
       setCurrentTime(audio.currentTime);
       setMediaSessionPlaybackState("paused");
+
+      // Auto-advance to the next queued track, if any.
+      const q = queueRef.current;
+      const idx = queueIndexRef.current;
+      if (idx >= 0 && idx < q.length - 1) {
+        const upNext = q[idx + 1]!;
+        const nextIdx = idx + 1;
+        setQueueIndex(nextIdx);
+        queueIndexRef.current = nextIdx;
+        startTrack(upNext);
+      } else {
+        setStatus("paused");
+      }
     };
     const onError = () => {
       if (!trackRef.current) return;
@@ -336,6 +407,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const hasNext = queueIndex >= 0 && queueIndex < queue.length - 1;
+  const hasPrevious = queueIndex > 0;
+
   const value = useMemo<PlayerContextValue>(
     () => ({
       track,
@@ -345,12 +419,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       volume,
       muted,
       error,
+      queue,
+      queueIndex,
+      hasNext,
+      hasPrevious,
       play,
       toggle,
       seek,
       setVolume,
       setMuted,
       stop,
+      next,
+      previous,
+      playAt,
     }),
     [
       track,
@@ -360,12 +441,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       volume,
       muted,
       error,
+      queue,
+      queueIndex,
+      hasNext,
+      hasPrevious,
       play,
       toggle,
       seek,
       setVolume,
       setMuted,
       stop,
+      next,
+      previous,
+      playAt,
     ],
   );
 
