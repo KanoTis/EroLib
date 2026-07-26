@@ -9,15 +9,14 @@ import {
   Alert,
   Chip,
   CircularProgress,
+  Table, TableHead, TableRow, TableCell, TableBody,
+  Select, MenuItem, FormControl, InputLabel,
 } from "@mui/material";
 import { Sync } from "@mui/icons-material";
-import type { SettingsPublic } from "@erolib/shared";
+import type { AuthMode, ProviderAccountPublic, ProviderId, SettingsPublic } from "@erolib/shared";
 import { api } from "../api";
-import { useThemeMode } from "../ThemeContext";
 
 export function SettingsPage() {
-  const { mode } = useThemeMode();
-  const isLight = mode === "light";
   const [settings, setSettings] = useState<SettingsPublic | null>(null);
   const [hours, setHours] = useState(4);
   const [recentDays, setRecentDays] = useState(7);
@@ -28,12 +27,24 @@ export function SettingsPage() {
   const [historySyncing, setHistorySyncing] = useState(false);
   const [historyMeta, setHistoryMeta] = useState<{ syncedAt: string | null; lastError: string | null; syncing: boolean } | null>(null);
 
+  const [providers, setProviders] = useState<ProviderAccountPublic[]>([]);
+  const [providerSaving, setProviderSaving] = useState(false);
+  const [providerBusyId, setProviderBusyId] = useState<number | null>(null);
+  const [provider, setProvider] = useState<ProviderId>("otobanana");
+  const [authMode, setAuthMode] = useState<AuthMode>("password");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [cookieHeader, setCookieHeader] = useState("");
+
+  async function loadProviders(): Promise<void> { setProviders(await api.providers()); }
+
   useEffect(() => {
     void api.settings().then((s) => { setSettings(s); setHours(s.syncIntervalHours); setRecentDays(s.recentDays); })
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
     void api.liveFolloweeHistory().then((h) =>
       setHistoryMeta({ syncedAt: h.syncedAt, lastError: h.lastError, syncing: h.syncing })
     ).catch(() => undefined);
+    void loadProviders().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, []);
 
   async function onSyncHistory(): Promise<void> {
@@ -56,7 +67,7 @@ export function SettingsPage() {
       <Box sx={{ mb: 3 }}>
         <Typography variant="overline" color="text.disabled">System</Typography>
         <Typography variant="h4">设置</Typography>
-        <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>同步节奏、关注历史后台同步与路径信息。</Typography>
+        <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>同步节奏、关注历史后台同步与渠道账号。</Typography>
       </Box>
 
       {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
@@ -138,22 +149,111 @@ export function SettingsPage() {
         </CardContent>
       </Card>
 
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>添加渠道账号</Typography>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+              <FormControl size="small" sx={{ minWidth: 160 }}>
+                <InputLabel>Provider</InputLabel>
+                <Select value={provider} label="Provider" onChange={(e) => setProvider(e.target.value as ProviderId)}>
+                  <MenuItem value="otobanana">Otobanana</MenuItem>
+                  <MenuItem value="koekoe">Koe-koe</MenuItem>
+                  <MenuItem value="erovoice">Erovoice</MenuItem>
+                </Select>
+              </FormControl>
+              <FormControl size="small" sx={{ minWidth: 160 }}>
+                <InputLabel>认证方式</InputLabel>
+                <Select value={authMode} label="认证方式" onChange={(e) => setAuthMode(e.target.value as AuthMode)}>
+                  <MenuItem value="password">账密</MenuItem>
+                  <MenuItem value="cookie">Cookie / Token</MenuItem>
+                </Select>
+              </FormControl>
+            </Box>
+
+            {authMode === "password" ? (
+              <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+                <TextField label="用户名 / Email" value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" size="small" sx={{ flex: 1 }} />
+                <TextField label="密码" type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" size="small" sx={{ flex: 1 }} />
+              </Box>
+            ) : (
+              <TextField label="Cookie / JWT" multiline rows={3} value={cookieHeader} onChange={(e) => setCookieHeader(e.target.value)}
+                placeholder="Otobanana: 粘贴 JWT" helperText="Cookie 过期后需重新导入" size="small" />
+            )}
+
+            <Button variant="contained" color="primary" disabled={providerSaving}
+              onClick={() => {
+                setError(null); setMsg(null); setProviderSaving(true);
+                void api.createProvider({ provider, authMode, username: username || undefined, password: password || undefined, cookieHeader: cookieHeader || undefined })
+                  .then(async () => { setMsg("已保存并验证通过"); setPassword(""); setCookieHeader(""); await loadProviders(); })
+                  .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+                  .finally(() => setProviderSaving(false));
+              }}>
+              {providerSaving ? <CircularProgress size={16} sx={{ mr: 1 }} /> : null}{providerSaving ? "验证中…" : "保存"}
+            </Button>
+          </Box>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+            <Typography variant="h6">已配置账号</Typography>
+            <Chip label={`${providers.length} 个`} size="small" variant="outlined" />
+          </Box>
+          {providers.length === 0 ? (
+            <Typography color="text.disabled">尚未配置 Provider。</Typography>
+          ) : (
+            <Box sx={{ overflowX: "auto" }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow><TableCell>Provider</TableCell><TableCell>模式</TableCell><TableCell>用户</TableCell><TableCell>状态</TableCell><TableCell>操作</TableCell></TableRow>
+                </TableHead>
+                <TableBody>
+                  {providers.map((p) => (
+                    <TableRow key={p.id}>
+                      <TableCell><Typography sx={{ fontWeight: 600 }}>{p.provider}</Typography></TableCell>
+                      <TableCell><Chip label={p.authMode} size="small" variant="outlined" /></TableCell>
+                      <TableCell>{p.username ?? "—"}</TableCell>
+                      <TableCell>
+                        <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+                          <Chip label={p.status} size="small" variant="outlined" />
+                          {p.statusMessage && <Typography variant="caption" color="text.disabled">{p.statusMessage}</Typography>}
+                        </Box>
+                      </TableCell>
+                      <TableCell>
+                        <Box sx={{ display: "flex", gap: 1 }}>
+                          <Button size="small" variant="outlined" disabled={providerBusyId === p.id} onClick={() => {
+                            setProviderBusyId(p.id); setError(null); setMsg(null);
+                            void api.testProvider(p.id).then(async (r) => {
+                              setMsg(r.ok ? `${p.provider} 测试成功` : "测试失败");
+                              if (!r.ok && r.error) setError(r.error);
+                              await loadProviders();
+                            }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+                            .finally(() => setProviderBusyId(null));
+                          }}>测试</Button>
+                          <Button size="small" color="error" variant="outlined" disabled={providerBusyId === p.id} onClick={() => {
+                            if (!confirm("确认删除？")) return;
+                            setProviderBusyId(p.id);
+                            void api.deleteProvider(p.id).then(loadProviders)
+                              .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+                              .finally(() => setProviderBusyId(null));
+                          }}>删除</Button>
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </Box>
+          )}
+        </CardContent>
+      </Card>
+
       {settings && (
         <Card>
           <CardContent>
-            <Typography variant="h6" gutterBottom>路径（只读）</Typography>
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mb: 2 }}>
-              {[
-                { label: "DATA_DIR", value: settings.dataDir },
-                { label: "MEDIA_DIR", value: settings.mediaDir },
-                { label: "CACHE_DIR", value: settings.cacheDir },
-              ].map((p) => (
-                <Box key={p.label} sx={{ p: 1, bgcolor: isLight ? "#F4F4F0" : "rgba(15,15,35,0.45)", borderRadius: 1, border: "1px solid", borderColor: "divider" }}>
-                  <Typography variant="caption" color="secondary.main" component="code">{p.label}</Typography>
-                  <Typography variant="body2">{p.value}</Typography>
-                </Box>
-              ))}
-            </Box>
+            <Typography variant="h6" gutterBottom>系统</Typography>
             <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
               <Chip label={`鉴权：${settings.authEnabled ? "已启用" : "未启用"}`} size="small" variant="outlined" />
               <Chip label={`下载并发：${settings.maxDownloadConcurrency}`} size="small" variant="outlined" />

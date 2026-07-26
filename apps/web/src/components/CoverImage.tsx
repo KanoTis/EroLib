@@ -45,6 +45,7 @@ export function CoverImage({
   size = "card",
   badge,
   showProviderBadge = true,
+  bordered = true,
 }: {
   provider: string;
   workId: string;
@@ -55,6 +56,8 @@ export function CoverImage({
   size?: "card" | "detail" | "list" | number;
   badge?: React.ReactNode;
   showProviderBadge?: boolean;
+  /** Set false for a full-bleed hero image (e.g. the expanded player) with no inset border. */
+  bordered?: boolean;
 }) {
   const [imgFailed, setImgFailed] = useState(false);
   const { mode } = useThemeMode();
@@ -109,7 +112,12 @@ export function CoverImage({
         background: showImage
           ? (isLight ? "#eeeeee" : "#0a0a0a")
           : c0,
-        border: size === "list" || isPx ? undefined : isLight ? "1px solid #e0e0e0" : "1px solid rgba(255,255,255,0.08)",
+        border:
+          !bordered || size === "list" || isPx
+            ? undefined
+            : isLight
+              ? "1px solid #e0e0e0"
+              : "1px solid rgba(255,255,255,0.08)",
         display: "grid",
         placeItems: "center",
       }}

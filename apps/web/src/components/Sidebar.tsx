@@ -11,9 +11,7 @@ import {
   LibraryMusic,
   Settings,
   Sync,
-  Download,
-  Mic,
-  Storage,
+  Dashboard,
   Logout,
   LightMode,
   DarkMode,
@@ -29,10 +27,8 @@ const ICON_SLOT = 40;
 
 const NAV_ITEMS = [
   { to: "/", label: "媒体库", icon: <LibraryMusic fontSize="small" /> },
-  { to: "/providers", label: "Providers", icon: <Storage fontSize="small" /> },
   { to: "/sync", label: "同步", icon: <Sync fontSize="small" /> },
-  { to: "/jobs", label: "下载任务", icon: <Download fontSize="small" /> },
-  { to: "/live", label: "直播", icon: <Mic fontSize="small" /> },
+  { to: "/status", label: "运行状态", icon: <Dashboard fontSize="small" /> },
   { to: "/settings", label: "设置", icon: <Settings fontSize="small" /> },
 ];
 

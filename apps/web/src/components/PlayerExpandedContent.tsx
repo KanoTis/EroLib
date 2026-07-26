@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Box, ButtonBase, Divider, IconButton, Typography } from "@mui/material";
-import { QueueMusic, Stop } from "@mui/icons-material";
+import { KeyboardArrowDown, QueueMusic, Stop } from "@mui/icons-material";
 import { usePlayer } from "../player/PlayerContext";
 import { CoverImage } from "./CoverImage";
 import { MarqueeText } from "./MarqueeText";
@@ -64,11 +64,31 @@ export function PlayerExpandedContent({
 
   return (
     <Box sx={{ display: "flex", flexDirection: "column" }}>
-      <ButtonBase onClick={onCollapse} aria-label="收起播放器" sx={{ width: "100%", py: 1 }}>
-        <Box sx={{ width: 36, height: 4, borderRadius: 999, bgcolor: "text.disabled", opacity: 0.4 }} />
-      </ButtonBase>
+      {variant === "mobile" && (
+        <ButtonBase onClick={onCollapse} aria-label="收起播放器" sx={{ width: "100%", py: 1 }}>
+          <Box sx={{ width: 36, height: 4, borderRadius: 999, bgcolor: "text.disabled", opacity: 0.4 }} />
+        </ButtonBase>
+      )}
 
-      <Box sx={{ width: "100%", maxWidth: isLarge ? 420 : undefined, mx: "auto" }}>
+      <Box sx={{ width: "100%", maxWidth: isLarge ? 420 : undefined, mx: "auto", position: "relative" }}>
+        {variant === "desktop" && (
+          <IconButton
+            onClick={onCollapse}
+            size="small"
+            aria-label="收起播放器"
+            sx={{
+              position: "absolute",
+              top: 8,
+              right: 8,
+              zIndex: 1,
+              bgcolor: "rgba(0,0,0,0.45)",
+              color: "#fff",
+              "&:hover": { bgcolor: "rgba(0,0,0,0.6)" },
+            }}
+          >
+            <KeyboardArrowDown fontSize="small" />
+          </IconButton>
+        )}
         <CoverImage
           provider={track.provider}
           workId={track.mediaId}
@@ -76,6 +96,7 @@ export function PlayerExpandedContent({
           authorName={track.subtitle}
           coverPath={track.artworkUrl}
           size="card"
+          bordered={false}
         />
 
         <Box

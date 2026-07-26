@@ -251,7 +251,7 @@ export function LibraryPage() {
       ) : items.length === 0 ? (
         <EmptyState icon={<Mic sx={{ width: 36, height: 36 }} />} title="暂无条目"
           description="点播：Providers 绑定后同步收藏。直播：在「同步」页订阅作者并完成录制。"
-          action={<Box sx={{ display: "flex", gap: 1 }}><Button variant="contained" color="primary" component={Link} to="/providers">配置 Provider</Button><Button variant="outlined" component={Link} to="/live">直播录制</Button></Box>} />
+          action={<Box sx={{ display: "flex", gap: 1 }}><Button variant="contained" color="primary" component={Link} to="/settings">配置 Provider</Button><Button variant="outlined" component={Link} to="/sync">直播录制</Button></Box>} />
       ) : (
         <>
           <Box

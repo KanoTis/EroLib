@@ -6,14 +6,13 @@ import {
   ToggleButtonGroup, ToggleButton, CircularProgress,
 } from "@mui/material";
 import { Refresh } from "@mui/icons-material";
-import type { LiveSubscriptionPublic, ProviderAccountPublic, SyncRunPublic } from "@erolib/shared";
+import type { LiveSubscriptionPublic, ProviderAccountPublic } from "@erolib/shared";
 import { api } from "../api";
 
 type SyncTab = "subscribe" | "vod";
 
 export function SyncPage() {
   const [tab, setTab] = useState<SyncTab>("subscribe");
-  const [runs, setRuns] = useState<SyncRunPublic[]>([]);
   const [providers, setProviders] = useState<ProviderAccountPublic[]>([]);
   const [subs, setSubs] = useState<LiveSubscriptionPublic[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -23,17 +22,13 @@ export function SyncPage() {
   const [importing, setImporting] = useState(false);
   const [toggleId, setToggleId] = useState<number | null>(null);
 
-  async function loadRuns(): Promise<void> { setRuns(await api.syncRuns()); }
   async function loadProviders(): Promise<void> { setProviders(await api.providers()); }
   async function loadSubs(): Promise<void> { setSubs(await api.liveSubscriptions()); }
-  async function loadVod(): Promise<void> { await Promise.all([loadRuns(), loadProviders()]); }
 
   useEffect(() => {
     void loadSubs().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-    void loadVod().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
-    const t = setInterval(() => { if (tab === "vod") { void loadRuns().catch(() => undefined); } }, 4000);
-    return () => clearInterval(t);
-  }, [tab]);
+    void loadProviders().catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  }, []);
 
   async function onImportFollowees(): Promise<void> {
     setImporting(true); setError(null); setMsg(null);
@@ -104,11 +99,11 @@ export function SyncPage() {
             <Box sx={{ overflowX: "auto" }}>
               <Table size="small">
                 <TableHead>
-                  <TableRow><TableCell>作者</TableCell><TableCell>渠道</TableCell><TableCell>同步作品</TableCell><TableCell>自动录制</TableCell><TableCell>最近在播</TableCell><TableCell>错误</TableCell><TableCell /></TableRow>
+                  <TableRow><TableCell>作者</TableCell><TableCell>渠道</TableCell><TableCell>同步作品</TableCell><TableCell>自动录制</TableCell><TableCell /></TableRow>
                 </TableHead>
                 <TableBody>
                   {subs.length === 0 ? (
-                    <TableRow><TableCell colSpan={7} sx={{ color: "text.disabled" }}>暂无订阅。</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={5} sx={{ color: "text.disabled" }}>暂无订阅。</TableCell></TableRow>
                   ) : subs.map((s) => (
                     <TableRow key={s.id}>
                       <TableCell>
@@ -124,8 +119,6 @@ export function SyncPage() {
                           <Button size="small" variant="outlined" disabled={busy} onClick={() => { void onToggle(s.id, "enabled", !s.enabled); }}>{s.enabled ? "开" : "关"}</Button>
                         ) : <Typography variant="caption" color="text.disabled">—</Typography>}
                       </TableCell>
-                      <TableCell><Typography variant="caption" color="text.disabled">{s.lastOnairAt || "—"}</Typography></TableCell>
-                      <TableCell><Typography variant="caption" color="text.disabled">{s.lastError || "—"}</Typography></TableCell>
                       <TableCell><Button size="small" color="error" variant="outlined" disabled={busy} onClick={() => { void onDelete(s.id); }}>移除</Button></TableCell>
                     </TableRow>
                   ))}
@@ -137,17 +130,16 @@ export function SyncPage() {
       ) : (
         <>
           <Box sx={{ display: "flex", gap: 1, mb: 2, flexWrap: "wrap", alignItems: "center" }}>
-            <Chip label={`同步记录 ${runs.length}`} size="small" variant="outlined" />
             <Button variant="contained" color="primary" disabled={syncing}
-              onClick={() => { setMsg(null); setError(null); setSyncing(true); void api.sync().then(() => { setMsg("已触发全量同步"); return loadRuns(); }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))).finally(() => setSyncing(false)); }}
+              onClick={() => { setMsg(null); setError(null); setSyncing(true); void api.sync().then(() => setMsg("已触发全量同步")).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e))).finally(() => setSyncing(false)); }}
               startIcon={syncing ? <CircularProgress size={16} /> : null}>立即同步全部</Button>
-            <Button variant="outlined" size="small" onClick={() => { void loadVod(); }} startIcon={<Refresh />}>刷新</Button>
+            <Button variant="outlined" size="small" onClick={() => { void loadProviders(); }} startIcon={<Refresh />}>刷新</Button>
           </Box>
 
-          <Card sx={{ mb: 2 }}>
+          <Card>
             <CardContent>
               <Typography variant="h6" gutterBottom>按渠道收藏同步</Typography>
-              <Typography variant="body2" color="text.disabled" sx={{ mb: 1 }}>关闭后仅跳过该渠道的收藏夹同步。</Typography>
+              <Typography variant="body2" color="text.disabled" sx={{ mb: 1 }}>关闭后仅跳过该渠道的收藏夹同步。运行状态请前往「运行状态」页查看。</Typography>
               {providers.length === 0 ? <Typography color="text.disabled">尚未配置 Provider。</Typography> : (
                 <Table size="small">
                   <TableHead><TableRow><TableCell>渠道</TableCell><TableCell>收藏同步</TableCell><TableCell /></TableRow></TableHead>
@@ -159,31 +151,6 @@ export function SyncPage() {
                     </TableRow>
                   ))}</TableBody>
                 </Table>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent>
-              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
-                <Typography variant="h6">同步历史</Typography>
-                <Typography variant="caption" color="text.disabled">约 4 秒自动刷新</Typography>
-              </Box>
-              {runs.length === 0 ? <Typography color="text.disabled">还没有同步记录。</Typography> : (
-                <Box sx={{ overflowX: "auto" }}>
-                  <Table size="small">
-                    <TableHead><TableRow><TableCell>ID</TableCell><TableCell>Provider</TableCell><TableCell>开始</TableCell><TableCell>结束</TableCell><TableCell>发现</TableCell><TableCell>入队</TableCell><TableCell>错误</TableCell></TableRow></TableHead>
-                    <TableBody>{runs.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell>{r.id}</TableCell><TableCell>{r.provider ?? "—"}</TableCell>
-                        <TableCell><Typography variant="caption">{r.startedAt}</Typography></TableCell>
-                        <TableCell><Typography variant="caption">{r.finishedAt ?? "…"}</Typography></TableCell>
-                        <TableCell>{r.discovered}</TableCell><TableCell>{r.enqueued}</TableCell>
-                        <TableCell><Typography variant="caption" color="text.disabled">{r.error ?? "—"}</Typography></TableCell>
-                      </TableRow>
-                    ))}</TableBody>
-                  </Table>
-                </Box>
               )}
             </CardContent>
           </Card>

@@ -8,11 +8,9 @@ import { LoginPage } from "./pages/LoginPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { WorkDetailPage } from "./pages/WorkDetailPage";
 import { AuthorPage } from "./pages/AuthorPage";
-import { ProvidersPage } from "./pages/ProvidersPage";
 import { SyncPage } from "./pages/SyncPage";
 import { SubscribeAddPage } from "./pages/SubscribeAddPage";
-import { JobsPage } from "./pages/JobsPage";
-import { LivePage } from "./pages/LivePage";
+import { StatusPage } from "./pages/StatusPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 export function App() {
@@ -78,11 +76,9 @@ function AuthenticatedShell({
         <Route path="/" element={<LibraryPage />} />
         <Route path="/works/:provider/:workId" element={<WorkDetailPage />} />
         <Route path="/authors/:provider/:authorId" element={<AuthorPage />} />
-        <Route path="/providers" element={<ProvidersPage />} />
         <Route path="/sync" element={<SyncPage />} />
         <Route path="/sync/add" element={<SubscribeAddPage />} />
-        <Route path="/jobs" element={<JobsPage />} />
-        <Route path="/live" element={<LivePage />} />
+        <Route path="/status" element={<StatusPage />} />
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

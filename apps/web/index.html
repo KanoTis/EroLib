@@ -7,6 +7,10 @@
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0F0F23" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content="#FBFBFA" />
     <title>Erolib — 音声媒体库</title>
+    <style>
+      /* Inline critical CSS: hide skip-link before external stylesheet loads, avoids FOUC flash */
+      .skip-link { position: absolute; left: -9999px; top: 0; }
+    </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
