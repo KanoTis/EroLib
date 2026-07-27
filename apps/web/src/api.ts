@@ -94,6 +94,7 @@ export const api = {
     status?: string;
     provider?: string;
     authorId?: string;
+    sort?: string;
     limit?: number;
     offset?: number;
   }) => {
@@ -102,6 +103,7 @@ export const api = {
     if (params?.status) sp.set("status", params.status);
     if (params?.provider) sp.set("provider", params.provider);
     if (params?.authorId) sp.set("authorId", params.authorId);
+    if (params?.sort) sp.set("sort", params.sort);
     if (params?.limit != null) sp.set("limit", String(params.limit));
     if (params?.offset != null) sp.set("offset", String(params.offset));
     const qs = sp.toString();
@@ -182,6 +184,7 @@ export const api = {
     q?: string;
     provider?: string;
     authorId?: string;
+    sort?: string;
     limit?: number;
     offset?: number;
   }) => {
@@ -189,6 +192,7 @@ export const api = {
     if (params?.q) sp.set("q", params.q);
     if (params?.provider) sp.set("provider", params.provider);
     if (params?.authorId) sp.set("authorId", params.authorId);
+    if (params?.sort) sp.set("sort", params.sort);
     if (params?.limit != null) sp.set("limit", String(params.limit));
     if (params?.offset != null) sp.set("offset", String(params.offset));
     const qs = sp.toString();

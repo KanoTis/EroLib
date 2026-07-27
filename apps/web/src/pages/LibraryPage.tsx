@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   Box, Button, Card, CardContent, CardActions,
-  Typography, TextField, Chip, Alert, CircularProgress,
+  Typography, TextField, Alert, CircularProgress, Chip,
   ToggleButtonGroup, ToggleButton,
   FormControl, Select, MenuItem,
 } from "@mui/material";
@@ -12,21 +12,18 @@ import { api } from "../api";
 import { CoverImage } from "../components/CoverImage";
 import { AuthorLink } from "../components/AuthorLink";
 import { EmptyState } from "../components/EmptyState";
-import { formatDuration, liveToTrack, MetaRow, providerLabel, publishTimestamp, workToTrack } from "../components/LibraryMeta";
+import { InfiniteScrollSentinel } from "../components/InfiniteScrollSentinel";
+import { formatDuration, libraryLayoutSx, liveToTrack, MetaRow, providerLabel, publishTimestamp, workToTrack } from "../components/LibraryMeta";
 import { RecentlyAddedRail, type RecentRailItem } from "../components/RecentlyAddedRail";
 import { usePlayer } from "../player/PlayerContext";
 import { ASMR } from "../theme";
 import { useThemeMode } from "../ThemeContext";
 
-const STATUS_LABEL: Record<string, string> = {
-  downloaded: "已下载", queued: "队列中", downloading: "下载中", failed: "失败", discovered: "已发现",
-};
-
 type LibraryViewMode = "small" | "standard" | "list";
 type KindFilter = "all" | "vod" | "live";
 type LibraryItem =
-  | { kind: "vod"; key: string; sortAt: string; work: WorkPublic }
-  | { kind: "live"; key: string; sortAt: string; media: LiveMediaPublic };
+  | { kind: "vod"; key: string; work: WorkPublic }
+  | { kind: "live"; key: string; media: LiveMediaPublic };
 
 const VIEW_MODE_KEY = "erolib.library.viewMode";
 const PAGE_SIZE = 50;
@@ -35,11 +32,37 @@ const RECENT_FETCH_LIMIT = 200;
 const RECENT_RAIL_SIZE = 60;
 const DEFAULT_RECENT_DAYS = 7;
 
+const SORT_OPTIONS: { value: string; label: string }[] = [
+  { value: "updated_desc", label: "最近更新" },
+  { value: "title_asc", label: "标题" },
+  { value: "title_desc", label: "标题 Z-A" },
+  { value: "duration_desc", label: "时长" },
+  { value: "duration_asc", label: "时长 ↑" },
+];
+
 function readViewMode(): LibraryViewMode {
   try { const raw = localStorage.getItem(VIEW_MODE_KEY); if (raw === "small" || raw === "standard" || raw === "list") return raw; } catch {}
   return "standard";
 }
 function parseKind(raw: string | null): KindFilter { if (raw === "vod" || raw === "live" || raw === "all") return raw; return "all"; }
+
+function compareLibraryItems(a: LibraryItem, b: LibraryItem, sort: string): number {
+  const dir = sort.endsWith("_asc") ? 1 : -1;
+  if (sort.startsWith("title")) {
+    const ta = a.kind === "vod" ? a.work.title : (a.media.title || a.media.roomId);
+    const tb = b.kind === "vod" ? b.work.title : (b.media.title || b.media.roomId);
+    return dir * ta.localeCompare(tb);
+  }
+  if (sort.startsWith("duration")) {
+    const da = a.kind === "vod" ? a.work.durationSeconds : a.media.durationSeconds;
+    const db = b.kind === "vod" ? b.work.durationSeconds : b.media.durationSeconds;
+    return dir * ((da ?? 0) - (db ?? 0));
+  }
+  // default: updatedAt
+  const ua = a.kind === "vod" ? a.work.updatedAt : a.media.updatedAt;
+  const ub = b.kind === "vod" ? b.work.updatedAt : b.media.updatedAt;
+  return dir * ua.localeCompare(ub);
+}
 
 async function fetchUpToCount<T>(fetchPage: (limit: number, offset: number) => Promise<T[]>, targetCount: number): Promise<{ items: T[]; hasMore: boolean }> {
   const target = Math.max(PAGE_SIZE, targetCount);
@@ -64,9 +87,9 @@ export function LibraryPage() {
   const [works, setWorks] = useState<WorkPublic[]>([]);
   const [liveItems, setLiveItems] = useState<LiveMediaPublic[]>([]);
   const [q, setQ] = useState("");
-  const [status, setStatus] = useState("");
   const [provider, setProvider] = useState("");
   const [kind, setKind] = useState<KindFilter>(() => parseKind(searchParams.get("type")));
+  const [sort, setSort] = useState("updated_desc");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -82,10 +105,10 @@ export function LibraryPage() {
 
   const wantVod = kind === "all" || kind === "vod";
   const wantLive = kind === "all" || kind === "live";
-  const showLoadMore = (wantVod && vodHasMore) || (wantLive && liveHasMore);
+  const hasMore = (wantVod && vodHasMore) || (wantLive && liveHasMore);
 
   function playVod(w: WorkPublic): void {
-    const queue = works.filter((x) => x.status === "downloaded").map(workToTrack);
+    const queue = works.map(workToTrack);
     play(workToTrack(w), queue);
   }
   function playLive(m: LiveMediaPublic, title: string): void {
@@ -105,9 +128,10 @@ export function LibraryPage() {
       setVodOffset(0); setLiveOffset(0); setVodHasMore(false); setLiveHasMore(false);
       const fetchVod = kind === "all" || kind === "vod";
       const fetchLive = kind === "all" || kind === "live";
+      const sortParam = sort === "updated_desc" ? undefined : sort;
       const [vodResult, liveResult] = await Promise.all([
-        fetchVod ? fetchUpToCount((l, o) => api.works({ q: q || undefined, status: status || undefined, provider: provider || undefined, limit: l, offset: o }), PAGE_SIZE) : Promise.resolve({ items: [] as WorkPublic[], hasMore: false }),
-        fetchLive ? fetchUpToCount((l, o) => api.liveMedia({ q: q || undefined, provider: provider || undefined, limit: l, offset: o }), PAGE_SIZE) : Promise.resolve({ items: [] as LiveMediaPublic[], hasMore: false }),
+        fetchVod ? fetchUpToCount((l, o) => api.works({ q: q || undefined, status: "downloaded", provider: provider || undefined, sort: sortParam, limit: l, offset: o }), PAGE_SIZE) : Promise.resolve({ items: [] as WorkPublic[], hasMore: false }),
+        fetchLive ? fetchUpToCount((l, o) => api.liveMedia({ q: q || undefined, provider: provider || undefined, sort: sortParam, limit: l, offset: o }), PAGE_SIZE) : Promise.resolve({ items: [] as LiveMediaPublic[], hasMore: false }),
       ]);
       if (reqId !== requestIdRef.current) return;
       setWorks(vodResult.items); setLiveItems(liveResult.items);
@@ -125,9 +149,10 @@ export function LibraryPage() {
     const reqId = ++requestIdRef.current;
     try {
       setError(null); setLoadingMore(true);
+      const sortParam = sort === "updated_desc" ? undefined : sort;
       const [vod, live] = await Promise.all([
-        fetchVod ? api.works({ q: q || undefined, status: status || undefined, provider: provider || undefined, limit: PAGE_SIZE, offset: vodOffset }) : Promise.resolve([] as WorkPublic[]),
-        fetchLive ? api.liveMedia({ q: q || undefined, provider: provider || undefined, limit: PAGE_SIZE, offset: liveOffset }) : Promise.resolve([] as LiveMediaPublic[]),
+        fetchVod ? api.works({ q: q || undefined, status: "downloaded", provider: provider || undefined, sort: sortParam, limit: PAGE_SIZE, offset: vodOffset }) : Promise.resolve([] as WorkPublic[]),
+        fetchLive ? api.liveMedia({ q: q || undefined, provider: provider || undefined, sort: sortParam, limit: PAGE_SIZE, offset: liveOffset }) : Promise.resolve([] as LiveMediaPublic[]),
       ]);
       if (reqId !== requestIdRef.current) return;
       if (fetchVod) {
@@ -142,10 +167,10 @@ export function LibraryPage() {
     finally { if (reqId === requestIdRef.current) setLoadingMore(false); }
   }
 
-  useEffect(() => { void loadInitial(); }, [kind]);
+  useEffect(() => { void loadInitial(); }, [kind, provider, sort]);
   useEffect(() => { const next = parseKind(searchParams.get("type")); if (next !== kind) setKind(next); }, [searchParams, kind]);
 
-  // Independent of the filters above — always reflects the whole library's newest arrivals.
+  // Independent of filters — always reflects the whole library's newest arrivals.
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -159,18 +184,16 @@ export function LibraryPage() {
           setRecentWorks(w); setRecentLive(l);
           if (s) setRecentDays(s.recentDays);
         }
-      } catch {
-        // Decorative widget only — main library list below loads independently.
-      }
+      } catch { /* decorative widget only */ }
     })();
     return () => { cancelled = true; };
   }, []);
 
   const items = useMemo((): LibraryItem[] => {
-    const v: LibraryItem[] = works.map((w) => ({ kind: "vod", key: `vod:${w.provider}:${w.workId}`, sortAt: w.updatedAt || w.createdAt, work: w }));
-    const l: LibraryItem[] = liveItems.map((m) => ({ kind: "live", key: `live:${m.provider}:${m.roomId}`, sortAt: m.updatedAt || m.recordedAt || m.createdAt, media: m }));
-    return [...v, ...l].sort((a, b) => b.sortAt.localeCompare(a.sortAt));
-  }, [works, liveItems]);
+    const v: LibraryItem[] = works.map((w) => ({ kind: "vod", key: `vod:${w.provider}:${w.workId}`, work: w }));
+    const l: LibraryItem[] = liveItems.map((m) => ({ kind: "live", key: `live:${m.provider}:${m.roomId}`, media: m }));
+    return [...v, ...l].sort((a, b) => compareLibraryItems(a, b, sort));
+  }, [works, liveItems, sort]);
 
   const recentItems = useMemo((): RecentRailItem[] => {
     const merged: { at: string; item: RecentRailItem }[] = [
@@ -210,7 +233,7 @@ export function LibraryPage() {
       <Box sx={{ mb: 3 }}>
         <Typography variant="overline" color="text.disabled">Library</Typography>
         <Typography variant="h4">媒体库</Typography>
-        <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>浏览已备份点播与直播录制。</Typography>
+        <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>浏览已备份下载的点播与直播录制。</Typography>
       </Box>
 
       <RecentlyAddedRail items={recentItems} days={recentDays} />
@@ -227,13 +250,13 @@ export function LibraryPage() {
             <MenuItem value="">全部渠道</MenuItem><MenuItem value="otobanana">Otobanana</MenuItem><MenuItem value="koekoe">Koe-koe</MenuItem><MenuItem value="erovoice">Erovoice</MenuItem>
           </Select>
         </FormControl>
-        {kind !== "live" && (
-          <FormControl size="small" sx={{ minWidth: 110 }}>
-            <Select value={status} onChange={(e) => setStatus(e.target.value)} displayEmpty>
-              <MenuItem value="">全部状态</MenuItem><MenuItem value="downloaded">已下载</MenuItem><MenuItem value="queued">队列中</MenuItem><MenuItem value="downloading">下载中</MenuItem><MenuItem value="failed">失败</MenuItem><MenuItem value="discovered">已发现</MenuItem>
-            </Select>
-          </FormControl>
-        )}
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <Select value={sort} onChange={(e) => setSort(e.target.value)}>
+            {SORT_OPTIONS.map((opt) => (
+              <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+            ))}
+          </Select>
+        </FormControl>
         <Button variant="contained" color="primary" startIcon={<Search />} onClick={() => { void loadInitial(); }}>搜索</Button>
         <ToggleButtonGroup value={viewMode} exclusive size="small" onChange={(_, v) => { if (v) { setViewMode(v); localStorage.setItem(VIEW_MODE_KEY, v); } }}>
           <ToggleButton value="small" aria-label="小尺寸"><ViewModule fontSize="small" /></ToggleButton>
@@ -254,25 +277,7 @@ export function LibraryPage() {
           action={<Box sx={{ display: "flex", gap: 1 }}><Button variant="contained" color="primary" component={Link} to="/settings">配置 Provider</Button><Button variant="outlined" component={Link} to="/sync">直播录制</Button></Box>} />
       ) : (
         <>
-          <Box
-            sx={
-              isList
-                ? {
-                    display: "flex",
-                    flexDirection: "column",
-                    bgcolor: listSurface,
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 0,
-                    overflow: "hidden",
-                  }
-                : {
-                    display: "grid",
-                    gridTemplateColumns: `repeat(auto-fill, minmax(${viewMode === "small" ? 148 : 220}px, 1fr))`,
-                    gap: 2,
-                  }
-            }
-          >
+          <Box sx={libraryLayoutSx(isList, viewMode, listSurface)}>
             {items.map((item, index) => {
               const isSmall = viewMode === "small" && !isList;
 
@@ -316,7 +321,6 @@ export function LibraryPage() {
                 }
 
                 const w = item.work;
-                const statusColor = w.status === "downloaded" ? "success" as const : w.status === "failed" ? "error" as const : w.status === "downloading" || w.status === "queued" ? "warning" as const : "default" as const;
                 return (
                   <Box
                     key={item.key}
@@ -355,15 +359,10 @@ export function LibraryPage() {
                       ]} />
                       <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
                         <Chip label="点播" size="small" variant="outlined" />
-                        <Chip label={STATUS_LABEL[w.status] ?? w.status} size="small" color={statusColor} />
                       </Box>
                     </Box>
                     <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-                      {w.status === "downloaded" ? (
-                        <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)}>播放</Button>
-                      ) : (
-                        <Typography variant="caption" color="text.disabled">不可播</Typography>
-                      )}
+                      <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)}>播放</Button>
                     </Box>
                   </Box>
                 );
@@ -384,7 +383,6 @@ export function LibraryPage() {
                         <Typography variant="caption" color="text.disabled">时长 {formatDuration(m.durationSeconds)}</Typography>
                       </CardContent>
                       <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
-                        <Chip label={providerLabel(m.provider)} size="small" variant="outlined" />
                         <Chip label="直播" size="small" color="warning" />
                         <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playLive(m, title)}>{isSmall ? "" : "播放"}</Button>
                         <Button size="small" color="error" variant="outlined" onClick={() => { void deleteLive(m); }}>{isSmall ? "×" : "删除"}</Button>
@@ -394,7 +392,6 @@ export function LibraryPage() {
                 );
               }
               const w = item.work;
-              const statusColor = w.status === "downloaded" ? "success" as const : w.status === "failed" ? "error" as const : w.status === "downloading" || w.status === "queued" ? "warning" as const : "default" as const;
               return (
                 <Card key={item.key} sx={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
                   <CoverImage provider={w.provider} workId={w.workId} title={w.title} authorName={w.authorName} coverPath={w.coverPath} size="card" />
@@ -409,25 +406,16 @@ export function LibraryPage() {
                       <Typography variant="caption" color="text.disabled">时长 {formatDuration(w.durationSeconds)}</Typography>
                     </CardContent>
                     <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
-                      <Chip label={providerLabel(w.provider)} size="small" variant="outlined" />
-                      <Chip label={STATUS_LABEL[w.status] ?? w.status} size="small" color={statusColor} />
-                      {w.status === "downloaded" ? (
-                        <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)}>{isSmall ? "" : "播放"}</Button>
-                      ) : <Typography variant="caption" color="text.disabled">不可播</Typography>}
+                      <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)}>{isSmall ? "" : "播放"}</Button>
                     </CardActions>
                   </Box>
                 </Card>
               );
             })}
           </Box>
-          {showLoadMore && (
-            <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
-              <Button variant="outlined" disabled={loadingMore} onClick={() => { void loadMore(); }}>{loadingMore ? "加载中…" : "加载更多"}</Button>
-            </Box>
-          )}
+          <InfiniteScrollSentinel active={hasMore} loading={loadingMore} onVisible={loadMore} />
         </>
       )}
     </Box>
   );
 }
-

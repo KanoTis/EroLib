@@ -106,3 +106,29 @@ export function MetaRow({ parts }: { parts: ReactNode[] }) {
     </Box>
   );
 }
+
+type LibraryViewMode = "small" | "standard" | "list";
+
+/** Shared grid/list sx for LibraryPage and AuthorPage. */
+export function libraryLayoutSx(
+  isList: boolean,
+  viewMode: LibraryViewMode,
+  listSurface: string,
+): Record<string, unknown> {
+  if (isList) {
+    return {
+      display: "flex",
+      flexDirection: "column",
+      bgcolor: listSurface,
+      border: "1px solid",
+      borderColor: "divider",
+      borderRadius: 0,
+      overflow: "hidden",
+    };
+  }
+  return {
+    display: "grid",
+    gridTemplateColumns: `repeat(auto-fill, minmax(${viewMode === "small" ? 148 : 220}px, 1fr))`,
+    gap: 2,
+  };
+}
