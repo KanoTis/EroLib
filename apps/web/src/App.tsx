@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Navigate, Route, Routes, useLocation, useNavigationType } from "react-router-dom";
 import { Box, CircularProgress } from "@mui/material";
 import { api } from "./api";
 import { Layout } from "./components/Layout";
+import { ScrollManager } from "./navigation";
 import { PlayerProvider } from "./player/PlayerContext";
 import { LoginPage } from "./pages/LoginPage";
 import { LibraryPage } from "./pages/LibraryPage";
@@ -70,10 +71,54 @@ function AuthenticatedShell({
   authEnabled: boolean;
   onLogout: () => void;
 }) {
+  const { pathname } = useLocation();
+  const navigationType = useNavigationType();
+  const libraryActive = pathname === "/";
+  // Keep the library mounted after the first visit so its list + DOM height survive
+  // detail navigations. Window scroll is restored below / by ScrollManager.
+  const [libraryMounted, setLibraryMounted] = useState(libraryActive);
+  const libraryScrollRef = useRef(0);
+
+  useEffect(() => {
+    if (libraryActive) setLibraryMounted(true);
+  }, [libraryActive]);
+
+  // Record scroll only while the library is the visible page — never after a
+  // route swap has already clamped window.scrollY to 0.
+  useEffect(() => {
+    if (!libraryActive) return;
+    const save = () => {
+      libraryScrollRef.current = window.scrollY;
+    };
+    window.addEventListener("scroll", save, { passive: true });
+    document.addEventListener("click", save, true);
+    return () => {
+      window.removeEventListener("scroll", save);
+      document.removeEventListener("click", save, true);
+    };
+  }, [libraryActive]);
+
+  useLayoutEffect(() => {
+    if (!libraryActive) return;
+    // Back/forward: restore. Fresh visits to "/" (sidebar Link, search icon): top.
+    const y = navigationType === "POP" ? libraryScrollRef.current : 0;
+    if (navigationType !== "POP") libraryScrollRef.current = 0;
+    window.scrollTo(0, y);
+  }, [libraryActive, pathname, navigationType]);
+
   return (
     <Layout authEnabled={authEnabled} onLogout={onLogout}>
+      {libraryMounted && (
+        <Box
+          sx={{ display: libraryActive ? "block" : "none" }}
+          aria-hidden={!libraryActive}
+        >
+          <LibraryPage active={libraryActive} />
+        </Box>
+      )}
       <Routes>
-        <Route path="/" element={<LibraryPage />} />
+        {/* Library is rendered above; keep the index route so Links to "/" resolve. */}
+        <Route path="/" element={null} />
         <Route path="/works/:provider/:workId" element={<WorkDetailPage />} />
         <Route path="/authors/:provider/:authorId" element={<AuthorPage />} />
         <Route path="/sync" element={<SyncPage />} />
@@ -82,6 +127,7 @@ function AuthenticatedShell({
         <Route path="/settings" element={<SettingsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      <ScrollManager />
     </Layout>
   );
 }

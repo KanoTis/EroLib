@@ -15,6 +15,7 @@ import { SidebarContent } from "./Sidebar";
 import { PcPlayerPanel } from "./PcPlayerPanel";
 import { MiniPlayerBar } from "./MiniPlayerBar";
 import { MobilePlayerSheet } from "./MobilePlayerSheet";
+import { useGoBack } from "../navigation";
 import { usePlayer } from "../player/PlayerContext";
 import { useThemeMode } from "../ThemeContext";
 import { ASMR } from "../theme";
@@ -36,6 +37,7 @@ export function Layout({
   const isMobile = useMediaQuery(theme.breakpoints.down("md"));
   const navigate = useNavigate();
   const location = useLocation();
+  const goBack = useGoBack();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [fullPlayerOpen, setFullPlayerOpen] = useState(false);
   const [sidebarHovered, setSidebarHovered] = useState(false);
@@ -124,7 +126,7 @@ export function Layout({
 
           {canGoBack && (
             <IconButton
-              onClick={() => navigate(-1)}
+              onClick={goBack}
               aria-label="返回"
               size="small"
               sx={{ width: 34, height: 34, color: "inherit" }}

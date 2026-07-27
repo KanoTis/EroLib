@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import { api } from "../api";
+import { formatDuration } from "./LibraryMeta";
 import { useThemeMode } from "../ThemeContext";
 
 const PALETTES: [string, string][] = [
@@ -44,6 +45,7 @@ export function CoverImage({
   coverPath,
   size = "card",
   badge,
+  durationSeconds,
   showProviderBadge = true,
   bordered = true,
 }: {
@@ -55,6 +57,8 @@ export function CoverImage({
   /** Named presets, or pixel size for compact player thumbs */
   size?: "card" | "detail" | "list" | number;
   badge?: React.ReactNode;
+  /** When set, overlays a dark duration chip at the top-left of the cover. */
+  durationSeconds?: number | null;
   showProviderBadge?: boolean;
   /** Set false for a full-bleed hero image (e.g. the expanded player) with no inset border. */
   bordered?: boolean;
@@ -93,6 +97,11 @@ export function CoverImage({
     : "0.68rem";
 
   const compact = isPx && size <= 72;
+  const durationLabel =
+    !compact && durationSeconds != null && Number.isFinite(durationSeconds) && durationSeconds >= 0
+      ? formatDuration(durationSeconds)
+      : null;
+  const cornerInset = size === "list" || compact ? 4 : 6;
 
   return (
     <Box
@@ -123,8 +132,46 @@ export function CoverImage({
       }}
       aria-hidden
     >
+      {durationLabel && (
+        <Box
+          component="span"
+          sx={{
+            position: "absolute",
+            top: cornerInset,
+            left: cornerInset,
+            zIndex: 1,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            height: size === "list" ? 16 : 20,
+            px: size === "list" ? "5px" : "7px",
+            borderRadius: "4px",
+            bgcolor: "rgba(33, 33, 33, 0.88)",
+            color: "#fff",
+            fontSize: size === "list" ? "0.625rem" : "0.72rem",
+            fontWeight: 600,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+            letterSpacing: "0.01em",
+            overflow: "hidden",
+            pointerEvents: "none",
+          }}
+        >
+          {durationLabel}
+        </Box>
+      )}
       {badge && (
-        <Box sx={{ position: "absolute", top: 8, left: 8, zIndex: 1 }}>
+        <Box
+          sx={{
+            position: "absolute",
+            bottom: size === "list" || compact ? 4 : 8,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 1,
+            display: "flex",
+            justifyContent: "center",
+          }}
+        >
           {badge}
         </Box>
       )}

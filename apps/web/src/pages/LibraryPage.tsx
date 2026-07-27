@@ -13,7 +13,7 @@ import { CoverImage } from "../components/CoverImage";
 import { AuthorLink } from "../components/AuthorLink";
 import { EmptyState } from "../components/EmptyState";
 import { InfiniteScrollSentinel } from "../components/InfiniteScrollSentinel";
-import { formatDuration, libraryLayoutSx, liveToTrack, MetaRow, providerLabel, publishTimestamp, workToTrack } from "../components/LibraryMeta";
+import { libraryLayoutSx, liveToTrack, MetaRow, providerLabel, publishTimestamp, workToTrack } from "../components/LibraryMeta";
 import { RecentlyAddedRail, type RecentRailItem } from "../components/RecentlyAddedRail";
 import { usePlayer } from "../player/PlayerContext";
 import { ASMR } from "../theme";
@@ -79,7 +79,7 @@ async function fetchUpToCount<T>(fetchPage: (limit: number, offset: number) => P
   return { items, hasMore: false };
 }
 
-export function LibraryPage() {
+export function LibraryPage({ active = true }: { active?: boolean }) {
   const { play } = usePlayer();
   const { mode } = useThemeMode();
   const isLight = mode === "light";
@@ -168,7 +168,13 @@ export function LibraryPage() {
   }
 
   useEffect(() => { void loadInitial(); }, [kind, provider, sort]);
-  useEffect(() => { const next = parseKind(searchParams.get("type")); if (next !== kind) setKind(next); }, [searchParams, kind]);
+
+  // Keep-alive: ignore URL changes from other routes (e.g. /works/...) while hidden.
+  useEffect(() => {
+    if (!active) return;
+    const next = parseKind(searchParams.get("type"));
+    if (next !== kind) setKind(next);
+  }, [active, searchParams, kind]);
 
   // Independent of filters — always reflects the whole library's newest arrivals.
   useEffect(() => {
@@ -300,17 +306,33 @@ export function LibraryPage() {
                         "&:hover": { bgcolor: isLight ? "rgba(25,118,210,0.04)" : "rgba(255,255,255,0.04)" },
                       }}
                     >
-                      <CoverImage provider={m.provider} workId={m.roomId} title={title} authorName={m.authorName} coverPath={null} size="list" />
+                      <CoverImage
+                        provider={m.provider}
+                        workId={m.roomId}
+                        title={title}
+                        authorName={m.authorName}
+                        coverPath={null}
+                        size="list"
+                        durationSeconds={m.durationSeconds}
+                        badge={<Chip label="直播" size="small" color="warning" />}
+                      />
                       <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 0.5, py: 1.25 }}>
-                        <Typography noWrap sx={{ fontWeight: 600, fontSize: "0.95rem" }}>{title}</Typography>
+                        <Typography
+                          sx={{
+                            fontWeight: 600,
+                            fontSize: "0.95rem",
+                            overflow: "hidden",
+                            display: "-webkit-box",
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical",
+                          }}
+                        >
+                          {title}
+                        </Typography>
                         <MetaRow parts={[
                           <AuthorLink key="a" provider={m.provider} authorId={m.authorId}>{m.authorName ?? m.authorId ?? "未知"}</AuthorLink>,
                           providerLabel(m.provider),
-                          formatDuration(m.durationSeconds),
                         ]} />
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                          <Chip label="直播" size="small" color="warning" />
-                        </Box>
                       </Box>
                       <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexShrink: 0 }}>
                         <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playLive(m, title)}>播放</Button>
@@ -336,18 +358,29 @@ export function LibraryPage() {
                       "&:hover": { bgcolor: isLight ? "rgba(25,118,210,0.04)" : "rgba(255,255,255,0.04)" },
                     }}
                   >
-                    <CoverImage provider={w.provider} workId={w.workId} title={w.title} authorName={w.authorName} coverPath={w.coverPath} size="list" />
+                    <CoverImage
+                      provider={w.provider}
+                      workId={w.workId}
+                      title={w.title}
+                      authorName={w.authorName}
+                      coverPath={w.coverPath}
+                      size="list"
+                      durationSeconds={w.durationSeconds}
+                    />
                     <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 0.5, py: 1.25 }}>
                       <Typography
                         component={Link}
                         to={`/works/${w.provider}/${w.workId}`}
-                        noWrap
                         sx={{
                           fontWeight: 600,
                           fontSize: "0.95rem",
                           color: "text.primary",
                           textDecoration: "none",
                           "&:hover": { color: "primary.main" },
+                          overflow: "hidden",
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
                         }}
                       >
                         {w.title}
@@ -355,11 +388,7 @@ export function LibraryPage() {
                       <MetaRow parts={[
                         <AuthorLink key="a" provider={w.provider} authorId={w.authorId}>{w.authorName ?? w.authorId ?? "未知作者"}</AuthorLink>,
                         providerLabel(w.provider),
-                        formatDuration(w.durationSeconds),
                       ]} />
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                        <Chip label="点播" size="small" variant="outlined" />
-                      </Box>
                     </Box>
                     <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
                       <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)}>播放</Button>
@@ -373,17 +402,24 @@ export function LibraryPage() {
                 const m = item.media; const title = m.title || m.roomId;
                 return (
                   <Card key={item.key} sx={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <CoverImage provider={m.provider} workId={m.roomId} title={title} authorName={m.authorName} coverPath={null} size="card" />
+                    <CoverImage
+                      provider={m.provider}
+                      workId={m.roomId}
+                      title={title}
+                      authorName={m.authorName}
+                      coverPath={null}
+                      size="card"
+                      durationSeconds={m.durationSeconds}
+                      badge={<Chip label="直播" size="small" color="warning" />}
+                    />
                     <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
                       <CardContent sx={{ flex: 1, py: 1 }}>
                         <Typography sx={{ fontWeight: 600, fontSize: "0.95rem", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{title}</Typography>
                         <Typography variant="body2" color="text.disabled" noWrap>
                           {m.authorName ?? m.authorId} · {providerLabel(m.provider)}
                         </Typography>
-                        <Typography variant="caption" color="text.disabled">时长 {formatDuration(m.durationSeconds)}</Typography>
                       </CardContent>
                       <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
-                        <Chip label="直播" size="small" color="warning" />
                         <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playLive(m, title)}>{isSmall ? "" : "播放"}</Button>
                         <Button size="small" color="error" variant="outlined" onClick={() => { void deleteLive(m); }}>{isSmall ? "×" : "删除"}</Button>
                       </CardActions>
@@ -394,7 +430,15 @@ export function LibraryPage() {
               const w = item.work;
               return (
                 <Card key={item.key} sx={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                  <CoverImage provider={w.provider} workId={w.workId} title={w.title} authorName={w.authorName} coverPath={w.coverPath} size="card" />
+                  <CoverImage
+                    provider={w.provider}
+                    workId={w.workId}
+                    title={w.title}
+                    authorName={w.authorName}
+                    coverPath={w.coverPath}
+                    size="card"
+                    durationSeconds={w.durationSeconds}
+                  />
                   <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
                     <CardContent sx={{ flex: 1, py: 1 }}>
                       <Typography component={Link} to={`/works/${w.provider}/${w.workId}`}
@@ -403,7 +447,6 @@ export function LibraryPage() {
                         <AuthorLink provider={w.provider} authorId={w.authorId}>{w.authorName ?? w.authorId ?? "未知作者"}</AuthorLink>
                         {" · "}{providerLabel(w.provider)}
                       </Typography>
-                      <Typography variant="caption" color="text.disabled">时长 {formatDuration(w.durationSeconds)}</Typography>
                     </CardContent>
                     <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
                       <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)}>{isSmall ? "" : "播放"}</Button>
@@ -413,7 +456,7 @@ export function LibraryPage() {
               );
             })}
           </Box>
-          <InfiniteScrollSentinel active={hasMore} loading={loadingMore} onVisible={loadMore} />
+          <InfiniteScrollSentinel active={active && hasMore} loading={loadingMore} onVisible={loadMore} />
         </>
       )}
     </Box>

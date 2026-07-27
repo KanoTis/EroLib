@@ -11,8 +11,9 @@ import { authorSourceUrl } from "../authorSourceUrl";
 import { AuthorAvatar } from "../components/AuthorAvatar";
 import { CoverImage } from "../components/CoverImage";
 import { AuthorLink } from "../components/AuthorLink";
-import { formatDuration, libraryLayoutSx, liveToTrack, MetaRow, providerLabel, workToTrack } from "../components/LibraryMeta";
+import { libraryLayoutSx, liveToTrack, MetaRow, providerLabel, workToTrack } from "../components/LibraryMeta";
 import { InfiniteScrollSentinel } from "../components/InfiniteScrollSentinel";
+import { useGoBack, usePageSnapshot } from "../navigation";
 import { usePlayer } from "../player/PlayerContext";
 import { ASMR } from "../theme";
 import { useThemeMode } from "../ThemeContext";
@@ -29,27 +30,45 @@ function readViewMode(): AuthorViewMode {
   return "standard";
 }
 
+interface AuthorSnapshot {
+  author: AuthorPublic | null;
+  works: WorkPublic[];
+  liveItems: LiveMediaPublic[];
+  worksOffset: number;
+  liveOffset: number;
+  worksHasMore: boolean;
+  liveHasMore: boolean;
+}
+
 export function AuthorPage() {
   const { provider = "", authorId = "" } = useParams();
   const { play } = usePlayer();
   const { mode } = useThemeMode();
+  const goBack = useGoBack();
   const isLight = mode === "light";
-  const [author, setAuthor] = useState<AuthorPublic | null>(null);
-  const [works, setWorks] = useState<WorkPublic[]>([]);
-  const [liveItems, setLiveItems] = useState<LiveMediaPublic[]>([]);
-  const [worksOffset, setWorksOffset] = useState(0);
-  const [liveOffset, setLiveOffset] = useState(0);
-  const [worksHasMore, setWorksHasMore] = useState(false);
-  const [liveHasMore, setLiveHasMore] = useState(false);
+  const [restored, keepSnapshot] = usePageSnapshot<AuthorSnapshot>();
+  const [author, setAuthor] = useState<AuthorPublic | null>(() => restored?.author ?? null);
+  const [works, setWorks] = useState<WorkPublic[]>(() => restored?.works ?? []);
+  const [liveItems, setLiveItems] = useState<LiveMediaPublic[]>(() => restored?.liveItems ?? []);
+  const [worksOffset, setWorksOffset] = useState(() => restored?.worksOffset ?? 0);
+  const [liveOffset, setLiveOffset] = useState(() => restored?.liveOffset ?? 0);
+  const [worksHasMore, setWorksHasMore] = useState(() => restored?.worksHasMore ?? false);
+  const [liveHasMore, setLiveHasMore] = useState(() => restored?.liveHasMore ?? false);
   const [worksLoadingMore, setWorksLoadingMore] = useState(false);
   const [liveLoadingMore, setLiveLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!restored);
   const [busy, setBusy] = useState(false);
   const [viewMode, setViewMode] = useState<AuthorViewMode>(readViewMode);
   const worksReqIdRef = useRef(0);
   const liveReqIdRef = useRef(0);
+
+  if (!loading) {
+    if (!loading) {
+    keepSnapshot({ author, works, liveItems, worksOffset, liveOffset, worksHasMore, liveHasMore });
+  }
+  }
 
   const loadAuthor = useCallback(async () => { setAuthor(await api.getAuthor(provider, authorId)); }, [provider, authorId]);
   const loadLists = useCallback(async () => {
@@ -62,12 +81,17 @@ export function AuthorPage() {
     setWorksHasMore(vodBatch.length === PAGE_SIZE); setLiveHasMore(liveBatch.length === PAGE_SIZE);
   }, [provider, authorId]);
 
+  // A restored page already holds its lists; refetch only when we land on another author.
+  const authorKey = `${provider}:${authorId}`;
+  const loadedAuthorRef = useRef<string | null>(restored ? authorKey : null);
   useEffect(() => {
+    if (loadedAuthorRef.current === authorKey) return;
+    loadedAuthorRef.current = authorKey;
     let cancelled = false;
     setLoading(true); setError(null); setMsg(null);
     void (async () => { try { await Promise.all([loadAuthor(), loadLists()]); } catch (e) { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); } finally { if (!cancelled) setLoading(false); } })();
     return () => { cancelled = true; };
-  }, [loadAuthor, loadLists]);
+  }, [authorKey, loadAuthor, loadLists]);
 
   async function loadMoreWorks(): Promise<void> {
     if (worksLoadingMore) return;
@@ -124,10 +148,10 @@ export function AuthorPage() {
     );
   }
   if (error && !author) {
-    return <Box><Button component={Link} to="/" startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回媒体库</Button><Alert severity="error">{error}</Alert></Box>;
+    return <Box><Button onClick={goBack} startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回</Button><Alert severity="error">{error}</Alert></Box>;
   }
   if (!author) {
-    return <Box><Button component={Link} to="/" startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回媒体库</Button><Typography color="text.disabled">未找到作者</Typography></Box>;
+    return <Box><Button onClick={goBack} startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回</Button><Typography color="text.disabled">未找到作者</Typography></Box>;
   }
 
   const displayName = author.displayName || author.username || author.authorId;
@@ -138,7 +162,7 @@ export function AuthorPage() {
 
   return (
     <Box>
-      <Button component={Link} to="/" startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回媒体库</Button>
+      <Button onClick={goBack} startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回</Button>
 
       <Card sx={{ mb: 2 }}>
         <CardContent>
@@ -227,18 +251,29 @@ export function AuthorPage() {
                         "&:hover": { bgcolor: isLight ? "rgba(25,118,210,0.04)" : "rgba(255,255,255,0.04)" },
                       }}
                     >
-                      <CoverImage provider={w.provider} workId={w.workId} title={w.title} authorName={w.authorName} coverPath={w.coverPath} size="list" />
+                      <CoverImage
+                        provider={w.provider}
+                        workId={w.workId}
+                        title={w.title}
+                        authorName={w.authorName}
+                        coverPath={w.coverPath}
+                        size="list"
+                        durationSeconds={w.durationSeconds}
+                      />
                       <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 0.5, py: 1.25 }}>
                         <Typography
                           component={Link}
                           to={`/works/${w.provider}/${w.workId}`}
-                          noWrap
                           sx={{
                             fontWeight: 600,
                             fontSize: "0.95rem",
                             color: "text.primary",
                             textDecoration: "none",
                             "&:hover": { color: "primary.main" },
+                            overflow: "hidden",
+                            display: "-webkit-box",
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical",
                           }}
                         >
                           {w.title}
@@ -246,10 +281,8 @@ export function AuthorPage() {
                         <MetaRow parts={[
                           <AuthorLink key="a" provider={w.provider} authorId={w.authorId}>{w.authorName ?? w.authorId ?? "未知作者"}</AuthorLink>,
                           providerLabel(w.provider),
-                          formatDuration(w.durationSeconds),
                         ]} />
                         <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                          <Chip label="点播" size="small" variant="outlined" />
                           <Chip label={STATUS_LABEL[w.status] ?? w.status} size="small" color={sc} />
                         </Box>
                       </Box>
@@ -265,7 +298,15 @@ export function AuthorPage() {
                 }
                 return (
                   <Card key={`vod:${w.id}`} sx={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <CoverImage provider={w.provider} workId={w.workId} title={w.title} authorName={w.authorName} coverPath={w.coverPath} size="card" />
+                    <CoverImage
+                      provider={w.provider}
+                      workId={w.workId}
+                      title={w.title}
+                      authorName={w.authorName}
+                      coverPath={w.coverPath}
+                      size="card"
+                      durationSeconds={w.durationSeconds}
+                    />
                     <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
                       <CardContent sx={{ flex: 1, py: 1 }}>
                         <Typography
@@ -289,7 +330,6 @@ export function AuthorPage() {
                           <AuthorLink provider={w.provider} authorId={w.authorId}>{w.authorName ?? w.authorId ?? "未知作者"}</AuthorLink>
                           {" · "}{providerLabel(w.provider)}
                         </Typography>
-                        <Typography variant="caption" color="text.disabled">时长 {formatDuration(w.durationSeconds)}</Typography>
                       </CardContent>
                       <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
                         <Chip label={STATUS_LABEL[w.status] ?? w.status} size="small" color={sc} />
@@ -334,17 +374,33 @@ export function AuthorPage() {
                         "&:hover": { bgcolor: isLight ? "rgba(25,118,210,0.04)" : "rgba(255,255,255,0.04)" },
                       }}
                     >
-                      <CoverImage provider={m.provider} workId={m.roomId} title={title} authorName={m.authorName} coverPath={null} size="list" />
+                      <CoverImage
+                        provider={m.provider}
+                        workId={m.roomId}
+                        title={title}
+                        authorName={m.authorName}
+                        coverPath={null}
+                        size="list"
+                        durationSeconds={m.durationSeconds}
+                        badge={<Chip label="直播" size="small" color="warning" />}
+                      />
                       <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 0.5, py: 1.25 }}>
-                        <Typography noWrap sx={{ fontWeight: 600, fontSize: "0.95rem" }}>{title}</Typography>
+                        <Typography
+                          sx={{
+                            fontWeight: 600,
+                            fontSize: "0.95rem",
+                            overflow: "hidden",
+                            display: "-webkit-box",
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical",
+                          }}
+                        >
+                          {title}
+                        </Typography>
                         <MetaRow parts={[
                           <AuthorLink key="a" provider={m.provider} authorId={m.authorId}>{m.authorName ?? m.authorId ?? "未知"}</AuthorLink>,
                           providerLabel(m.provider),
-                          formatDuration(m.durationSeconds),
                         ]} />
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                          <Chip label="直播" size="small" color="warning" />
-                        </Box>
                       </Box>
                       <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
                         <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playLive(m, title)}>播放</Button>
@@ -354,17 +410,24 @@ export function AuthorPage() {
                 }
                 return (
                   <Card key={`live:${m.id}`} sx={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <CoverImage provider={m.provider} workId={m.roomId} title={title} authorName={m.authorName} coverPath={null} size="card" />
+                    <CoverImage
+                      provider={m.provider}
+                      workId={m.roomId}
+                      title={title}
+                      authorName={m.authorName}
+                      coverPath={null}
+                      size="card"
+                      durationSeconds={m.durationSeconds}
+                      badge={<Chip label="直播" size="small" color="warning" />}
+                    />
                     <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
                       <CardContent sx={{ flex: 1, py: 1 }}>
                         <Typography sx={{ fontWeight: 600, fontSize: "0.95rem", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{title}</Typography>
                         <Typography variant="body2" color="text.disabled" noWrap>
                           {m.authorName ?? m.authorId} · {providerLabel(m.provider)}
                         </Typography>
-                        <Typography variant="caption" color="text.disabled">时长 {formatDuration(m.durationSeconds)}</Typography>
                       </CardContent>
                       <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
-                        <Chip label="直播" size="small" color="warning" />
                         <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playLive(m, title)}>{isSmall ? "" : "播放"}</Button>
                       </CardActions>
                     </Box>

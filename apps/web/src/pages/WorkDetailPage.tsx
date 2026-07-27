@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import {
   Box, Card, CardContent, Typography, Button, Alert, Chip, CircularProgress,
 } from "@mui/material";
@@ -8,6 +8,7 @@ import type { WorkPublic } from "@erolib/shared";
 import { api } from "../api";
 import { CoverImage } from "../components/CoverImage";
 import { AuthorLink } from "../components/AuthorLink";
+import { useGoBack } from "../navigation";
 import { useThemeMode } from "../ThemeContext";
 import { usePlayer } from "../player/PlayerContext";
 
@@ -18,6 +19,7 @@ const STATUS_LABEL: Record<string, string> = {
 export function WorkDetailPage() {
   const { provider = "", workId = "" } = useParams();
   const { mode } = useThemeMode();
+  const goBack = useGoBack();
   const isLight = mode === "light";
   const { play, track, status } = usePlayer();
   const [work, setWork] = useState<WorkPublic | null>(null);
@@ -32,7 +34,7 @@ export function WorkDetailPage() {
   if (error && !work) {
     return (
       <Box>
-        <Button component={Link} to="/" startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回媒体库</Button>
+        <Button onClick={goBack} startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回</Button>
         <Alert severity="error">{error}</Alert>
       </Box>
     );
@@ -51,12 +53,12 @@ export function WorkDetailPage() {
 
   return (
     <Box>
-      <Button component={Link} to="/" startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回媒体库</Button>
+      <Button onClick={goBack} startIcon={<ArrowBack />} sx={{ mb: 2 }}>返回</Button>
 
       <Card>
         <CardContent>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "180px 1fr" }, gap: 3, alignItems: "start" }}>
-            <CoverImage provider={work.provider} workId={work.workId} title={work.title} authorName={work.authorName} coverPath={work.coverPath} size="detail" />
+            <CoverImage provider={work.provider} workId={work.workId} title={work.title} authorName={work.authorName} coverPath={work.coverPath} size="detail" durationSeconds={work.durationSeconds} />
             <Box>
               <Typography variant="overline" color="text.disabled">{work.provider}</Typography>
               <Typography variant="h4" sx={{ mb: 1 }}>{work.title}</Typography>
