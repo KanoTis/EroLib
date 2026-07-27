@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Box, IconButton, Slider } from "@mui/material";
 import { VolumeDown, VolumeOff, VolumeUp } from "@mui/icons-material";
 
@@ -16,7 +17,10 @@ export function PlayerVolumeControl({
   width?: number;
   size?: "small" | "medium";
 }) {
-  const effective = muted ? 0 : volume;
+  // Drag updates local state only — committing every tick to the shared
+  // player context re-renders every usePlayer() consumer and feels janky.
+  const [scrub, setScrub] = useState<number | null>(null);
+  const effective = scrub ?? (muted ? 0 : volume);
   const MuteIcon = effective === 0 ? VolumeOff : effective < 0.5 ? VolumeDown : VolumeUp;
 
   return (
@@ -35,7 +39,11 @@ export function PlayerVolumeControl({
         max={1}
         step={0.01}
         value={effective}
-        onChange={(_, v) => onVolumeChange(v as number)}
+        onChange={(_, v) => setScrub(v as number)}
+        onChangeCommitted={(_, v) => {
+          onVolumeChange(v as number);
+          setScrub(null);
+        }}
         sx={{ width }}
         aria-label="音量"
       />

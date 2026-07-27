@@ -23,8 +23,7 @@ export function PlayerTransportControls({
   size?: "md" | "lg";
 }) {
   const isLarge = size === "lg";
-  const playSize = isLarge ? 72 : 48;
-  const playIconSize = isLarge ? 40 : 26;
+  const playIconSize = isLarge ? 52 : 34;
   const sideIconSize = isLarge ? "medium" : "small";
 
   return (
@@ -39,14 +38,7 @@ export function PlayerTransportControls({
 
       <IconButton
         onClick={onToggle}
-        sx={{
-          bgcolor: "primary.main",
-          color: "#fff",
-          "&:hover": { bgcolor: "primary.dark" },
-          width: playSize,
-          height: playSize,
-          mx: isLarge ? 1 : 0.5,
-        }}
+        sx={{ color: "text.primary", mx: isLarge ? 1 : 0.5 }}
         aria-label={isPlaying ? "暂停" : "播放"}
       >
         {isPlaying ? <Pause sx={{ fontSize: playIconSize }} /> : <PlayArrow sx={{ fontSize: playIconSize }} />}

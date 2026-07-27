@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Box, ButtonBase, Divider, IconButton, Typography } from "@mui/material";
-import { KeyboardArrowDown, QueueMusic, Stop } from "@mui/icons-material";
+import { KeyboardArrowDown, Link as LinkIcon, QueueMusic, Stop } from "@mui/icons-material";
+import { api } from "../api";
 import { usePlayer } from "../player/PlayerContext";
+import { useThemeMode } from "../ThemeContext";
 import { CoverImage } from "./CoverImage";
 import { MarqueeText } from "./MarqueeText";
 import { PlayerQueuePopover } from "./PlayerQueuePopover";
@@ -42,6 +45,9 @@ export function PlayerExpandedContent({
     playAt,
   } = usePlayer();
 
+  const navigate = useNavigate();
+  const { mode } = useThemeMode();
+  const isLight = mode === "light";
   const [scrubTime, setScrubTime] = useState<number | null>(null);
   const [queueAnchor, setQueueAnchor] = useState<HTMLElement | null>(null);
 
@@ -50,6 +56,7 @@ export function PlayerExpandedContent({
   const isPlaying = status === "playing" || status === "loading";
   const canSeek = Number.isFinite(duration) && duration > 0;
   const isLarge = variant === "mobile";
+  const hasArt = Boolean(track.artworkUrl);
 
   function handleRewind() {
     seek(Math.max(0, currentTime - 5));
@@ -63,14 +70,55 @@ export function PlayerExpandedContent({
   }
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column" }}>
+    <Box sx={{ display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
+      {hasArt && (
+        <Box
+          aria-hidden
+          sx={{
+            position: "absolute",
+            inset: -60,
+            zIndex: 0,
+            backgroundImage: `url(${api.coverUrl(track.provider, track.mediaId)})`,
+            backgroundSize: "cover",
+            backgroundPosition: "center",
+            filter: "blur(60px) saturate(1.5)",
+            transform: "scale(1.1)",
+            opacity: isLight ? 0.35 : 0.55,
+          }}
+        />
+      )}
+      <Box
+        aria-hidden
+        sx={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 0,
+          bgcolor: "background.paper",
+          opacity: hasArt ? (isLight ? 0.72 : 0.66) : 1,
+        }}
+      />
+
       {variant === "mobile" && (
-        <ButtonBase onClick={onCollapse} aria-label="收起播放器" sx={{ width: "100%", py: 1 }}>
+        <ButtonBase
+          onClick={onCollapse}
+          aria-label="收起播放器"
+          sx={{ width: "100%", py: 1, position: "relative", zIndex: 1 }}
+        >
           <Box sx={{ width: 36, height: 4, borderRadius: 999, bgcolor: "text.disabled", opacity: 0.4 }} />
         </ButtonBase>
       )}
 
-      <Box sx={{ width: "100%", maxWidth: isLarge ? 420 : undefined, mx: "auto", position: "relative" }}>
+      {variant === "desktop" && (
+        <ButtonBase
+          onClick={onCollapse}
+          aria-label="收起播放器"
+          sx={{ width: "100%", py: 1, position: "relative", zIndex: 1 }}
+        >
+          <Box sx={{ width: 36, height: 4, borderRadius: 999, bgcolor: "text.disabled", opacity: 0.4 }} />
+        </ButtonBase>
+      )}
+
+      <Box sx={{ width: "100%", maxWidth: isLarge ? 420 : undefined, mx: "auto", position: "relative", zIndex: 1 }}>
         {variant === "desktop" && (
           <IconButton
             onClick={onCollapse}
@@ -89,15 +137,27 @@ export function PlayerExpandedContent({
             <KeyboardArrowDown fontSize="small" />
           </IconButton>
         )}
-        <CoverImage
-          provider={track.provider}
-          workId={track.mediaId}
-          title={track.title}
-          authorName={track.subtitle}
-          coverPath={track.artworkUrl}
-          size="card"
-          bordered={false}
-        />
+        <Box sx={{ px: isLarge ? 4 : 3, pt: isLarge ? 3 : 0 }}>
+          <Box
+            sx={{
+              borderRadius: "4px",
+              overflow: "hidden",
+              boxShadow: isLight
+                ? "0 12px 32px rgba(0,0,0,0.18)"
+                : "0 12px 40px rgba(0,0,0,0.45)",
+            }}
+          >
+            <CoverImage
+              provider={track.provider}
+              workId={track.mediaId}
+              title={track.title}
+              authorName={track.subtitle}
+              coverPath={track.artworkUrl}
+              size="card"
+              bordered={false}
+            />
+          </Box>
+        </Box>
 
         <Box
           sx={{
@@ -199,6 +259,15 @@ export function PlayerExpandedContent({
             >
               <Stop fontSize="small" />
             </IconButton>
+            {track.kind === "vod" && (
+              <IconButton
+                size="small"
+                onClick={() => navigate(`/works/${track.provider}/${track.mediaId}`)}
+                aria-label="打开作品详情"
+              >
+                <LinkIcon fontSize="small" />
+              </IconButton>
+            )}
           </Box>
         </Box>
       </Box>
