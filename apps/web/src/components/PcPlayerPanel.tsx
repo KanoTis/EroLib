@@ -168,7 +168,7 @@ export function PcPlayerPanel() {
         bgcolor: panelBg,
         border: "1px solid",
         borderColor: "divider",
-        borderRadius: 3,
+        borderRadius: "4px",
         overflow: "hidden",
         boxShadow: isLight ? "0 8px 32px rgba(0,0,0,0.12)" : "0 8px 32px rgba(0,0,0,0.45)",
       }}

@@ -70,7 +70,6 @@ export function WorkDetailPage() {
               <Box sx={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 1.5, mb: 2 }}>
                 {[
                   { label: "作者", value: <AuthorLink provider={work.provider} authorId={work.authorId}>{work.authorName ?? work.authorId ?? "—"}</AuthorLink> },
-                  { label: "Work ID", value: work.workId },
                   { label: "时长", value: work.durationSeconds != null ? `${Math.floor(work.durationSeconds / 60)}:${String(work.durationSeconds % 60).padStart(2, "0")}` : "—" },
                   { label: "发布日期", value: work.publishedAt ? (work.publishedAt.startsWith("20") ? work.publishedAt.slice(0, 10) : work.publishedAt) : "—" },
                   { label: "Provider", value: work.provider },
