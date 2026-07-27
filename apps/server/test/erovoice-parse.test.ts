@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  extractAuthorIconUrl,
   extractCoverUrl,
   parseBookmarkHtml,
   parseDetailHtml,
@@ -92,6 +93,28 @@ describe("erovoice cover urls", () => {
       <img src="https://erovoice-ch.com/wp-content/uploads/2025/06/img_siterogo.png" />
     `;
     assert.equal(extractCoverUrl(html), null);
+  });
+});
+
+describe("erovoice extractAuthorIconUrl", () => {
+  it("finds the profile avatar preceding the authorUser heading", () => {
+    // Shape confirmed against a live erovoice-ch.com profile page.
+    const html = `
+      <header><a class="icon"><img src="https://erovoice-ch.com/wp-content/uploads/2025/08/bg_menu.png"></a></header>
+      <article class="postUserInfo">
+        <span class="hoverImageWrap"><img src="https://data.erovoice-ch.com/wp-content/uploads/2026/05/pic-100x100.webp" width="100" height="100" alt="さなぎさん"></span>
+        <section><h1 class="authorUser">さなぎさん</h1></section>
+      </article>
+    `;
+    assert.equal(
+      extractAuthorIconUrl(html),
+      "https://data.erovoice-ch.com/wp-content/uploads/2026/05/pic.webp",
+    );
+  });
+
+  it("ignores site chrome icons and returns null without a match", () => {
+    const html = `<a class="icon"><img src="https://erovoice-ch.com/wp-content/uploads/2025/08/bg_menu.png"></a>`;
+    assert.equal(extractAuthorIconUrl(html), null);
   });
 });
 

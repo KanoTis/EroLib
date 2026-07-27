@@ -227,6 +227,29 @@ export function extractCoverUrl(html: string): string | null {
   return candidates[0] ?? null;
 }
 
+/**
+ * Extract the profile avatar from an author page.
+ * The image lives in `.hoverImageWrap` immediately before the page's
+ * `<h1 class="authorUser">` heading (verified against a live profile page).
+ */
+export function extractAuthorIconUrl(html: string): string | null {
+  const heading = /<h1[^>]*class=["'][^"']*authorUser[^"']*["'][^>]*>/i.exec(
+    html,
+  );
+  if (!heading) return null;
+  const window = html.slice(Math.max(0, heading.index - 1000), heading.index);
+  const imgRe = /<img[^>]+src=["']([^"']+)["']/gi;
+  let last: string | undefined;
+  let m: RegExpExecArray | null;
+  while ((m = imgRe.exec(window)) !== null) {
+    last = m[1];
+  }
+  if (!last?.trim()) return null;
+  const abs = preferOriginalImageUrl(absolutizeUrl(last.trim()));
+  if (!isUploadImageUrl(abs) || isRejectedCoverUrl(abs)) return null;
+  return abs;
+}
+
 
 export interface BookmarkCard {
   workId: string;
@@ -1201,6 +1224,47 @@ export async function searchErovoiceAuthors(
     ];
   } catch {
     return [];
+  }
+}
+
+export interface ErovoiceAuthorProfile {
+  displayName: string | null;
+  iconUrl: string | null;
+}
+
+/**
+ * Fetch a public author profile page for display name + avatar.
+ * Anonymous GET, same endpoint as searchErovoiceAuthors.
+ */
+export async function fetchErovoiceAuthorProfile(
+  authorId: string,
+  sessionCookie?: string | null,
+): Promise<ErovoiceAuthorProfile | null> {
+  const slug = authorId.trim().replace(/^\/+|\/+$/g, "");
+  if (!slug || !isErovoiceAuthorSlug(slug)) return null;
+
+  const headers: Record<string, string> = {
+    "User-Agent": DEFAULT_UA,
+    Accept: "text/html,application/xhtml+xml",
+    Referer: `${BASE}/`,
+  };
+  const cookie = sessionCookie?.trim();
+  if (cookie) headers.Cookie = cookie;
+
+  try {
+    const res = await fetch(`${BASE}/${encodeURIComponent(slug)}`, {
+      headers,
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    if (!/class=["'][^"']*authorUser/i.test(html)) return null;
+    return {
+      displayName: parseProfileDisplayName(html, slug),
+      iconUrl: extractAuthorIconUrl(html),
+    };
+  } catch {
+    return null;
   }
 }
 

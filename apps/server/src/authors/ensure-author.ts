@@ -15,6 +15,7 @@ import {
   works,
 } from "../db/schema.js";
 import { fetchToFile } from "../providers/download-utils.js";
+import { fetchErovoiceAuthorProfile } from "../providers/erovoice.js";
 import {
   fetchUserProfile,
   looksLikeUuid,
@@ -154,6 +155,33 @@ async function ensureAuthorsRow(
   return row;
 }
 
+async function saveAuthorAvatar(opts: {
+  mediaRoot: string;
+  provider: ProviderId;
+  authorId: string;
+  iconUrl: string;
+}): Promise<string | null> {
+  try {
+    const paths = authorAvatarPaths(opts.mediaRoot, opts.provider, opts.authorId);
+    const tmpPath = path.join(paths.dir, `avatar.download.${process.pid}.tmp`);
+    const result = await fetchToFile({ url: opts.iconUrl, destPath: tmpPath });
+    const ext =
+      result.ext === "bin" || result.ext === "mp3" || result.ext === "m4a"
+        ? "jpg"
+        : result.ext;
+    const finalPath = paths.file(ext);
+    try {
+      await rename(tmpPath, finalPath);
+    } catch {
+      await copyFile(tmpPath, finalPath);
+      await rm(tmpPath, { force: true });
+    }
+    return paths.rel(ext);
+  } catch {
+    return null;
+  }
+}
+
 async function tryDownloadOtobananaAvatar(opts: {
   db: AppDatabase;
   mediaRoot: string;
@@ -184,31 +212,14 @@ async function tryDownloadOtobananaAvatar(opts: {
     return { avatarPath: null, displayName: null, username: null };
   }
 
-  let avatarPath: string | null = null;
-  if (profile.avatarUrl) {
-    try {
-      const paths = authorAvatarPaths(opts.mediaRoot, "otobanana", opts.authorId);
-      const tmpPath = path.join(paths.dir, `avatar.download.${process.pid}.tmp`);
-      const result = await fetchToFile({
-        url: profile.avatarUrl,
-        destPath: tmpPath,
-      });
-      const ext =
-        result.ext === "bin" || result.ext === "mp3" || result.ext === "m4a"
-          ? "jpg"
-          : result.ext;
-      const finalPath = paths.file(ext);
-      try {
-        await rename(tmpPath, finalPath);
-      } catch {
-        await copyFile(tmpPath, finalPath);
-        await rm(tmpPath, { force: true });
-      }
-      avatarPath = paths.rel(ext);
-    } catch {
-      avatarPath = null;
-    }
-  }
+  const avatarPath = profile.avatarUrl
+    ? await saveAuthorAvatar({
+        mediaRoot: opts.mediaRoot,
+        provider: "otobanana",
+        authorId: opts.authorId,
+        iconUrl: profile.avatarUrl,
+      })
+    : null;
 
   const now = nowSql();
   await opts.db
@@ -225,6 +236,41 @@ async function tryDownloadOtobananaAvatar(opts: {
     displayName: profile.displayName,
     username: profile.username,
   };
+}
+
+async function tryDownloadErovoiceAvatar(opts: {
+  db: AppDatabase;
+  mediaRoot: string;
+  authorId: string;
+  authorsRowId: number;
+}): Promise<{
+  avatarPath: string | null;
+  displayName: string | null;
+  username: string | null;
+}> {
+  const profile = await fetchErovoiceAuthorProfile(opts.authorId);
+  if (!profile) return { avatarPath: null, displayName: null, username: null };
+
+  const avatarPath = profile.iconUrl
+    ? await saveAuthorAvatar({
+        mediaRoot: opts.mediaRoot,
+        provider: "erovoice",
+        authorId: opts.authorId,
+        iconUrl: profile.iconUrl,
+      })
+    : null;
+
+  const now = nowSql();
+  await opts.db
+    .update(authors)
+    .set({
+      ...(profile.displayName ? { displayName: profile.displayName } : {}),
+      ...(avatarPath ? { avatarPath } : {}),
+      updatedAt: now,
+    })
+    .where(eq(authors.id, opts.authorsRowId));
+
+  return { avatarPath, displayName: profile.displayName, username: null };
 }
 
 export async function getAuthorPublic(opts: {
@@ -271,23 +317,33 @@ export async function getAuthorPublic(opts: {
     authorsRow = { ...authorsRow, avatarPath: null };
   }
 
-  // Lazy avatar download for otobanana only (best-effort; never fail the page).
-  if (!hasAvatar && provider === "otobanana") {
-    const downloaded = await tryDownloadOtobananaAvatar({
-      db,
-      mediaRoot,
-      authorId,
-      authorsRowId: authorsRow.id,
-      getToken: async () => {
-        if (!opts.ensureOtobananaSession) return null;
-        try {
-          const session = await opts.ensureOtobananaSession();
-          return sessionData(session).accessToken ?? null;
-        } catch {
-          return null;
-        }
-      },
-    });
+  // Lazy avatar download for providers with a real avatar (best-effort; never
+  // fail the page). Koekoe has no avatar/cover — see koekoe.ts — so it's
+  // deliberately excluded and stays on the gradient placeholder.
+  if (!hasAvatar && (provider === "otobanana" || provider === "erovoice")) {
+    const downloaded =
+      provider === "otobanana"
+        ? await tryDownloadOtobananaAvatar({
+            db,
+            mediaRoot,
+            authorId,
+            authorsRowId: authorsRow.id,
+            getToken: async () => {
+              if (!opts.ensureOtobananaSession) return null;
+              try {
+                const session = await opts.ensureOtobananaSession();
+                return sessionData(session).accessToken ?? null;
+              } catch {
+                return null;
+              }
+            },
+          })
+        : await tryDownloadErovoiceAvatar({
+            db,
+            mediaRoot,
+            authorId,
+            authorsRowId: authorsRow.id,
+          });
     profileUsername = downloaded.username;
     if (downloaded.avatarPath || downloaded.displayName) {
       const [fresh] = await db
