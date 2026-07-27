@@ -1,5 +1,5 @@
 import { serveStatic } from "@hono/node-server/serve-static";
-import { and, desc, eq, like, or } from "drizzle-orm";
+import { and, asc, desc, eq, like, or } from "drizzle-orm";
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { HTTPException } from "hono/http-exception";
@@ -240,6 +240,18 @@ function toPublicWork(row: typeof works.$inferSelect): WorkPublic {
     updatedAt: row.updatedAt,
     downloadedAt: row.downloadedAt,
   };
+}
+
+/** Map sort query param to (column, order) for works and liveMedia tables. */
+function parseSort(sort: string | undefined, table: typeof works | typeof liveMedia) {
+  switch (sort) {
+    case "updated_asc": return asc(table.updatedAt);
+    case "title_asc": return asc(table.title);
+    case "title_desc": return desc(table.title);
+    case "duration_asc": return asc(table.durationSeconds);
+    case "duration_desc": return desc(table.durationSeconds);
+    default: return desc(table.updatedAt);
+  }
 }
 
 export function createApp(deps: AppDeps): Hono<AuthEnv> {
@@ -711,6 +723,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       Number.parseInt(c.req.query("limit") ?? "50", 10) || 50,
     );
     const offset = Number.parseInt(c.req.query("offset") ?? "0", 10) || 0;
+    const sort = c.req.query("sort");
 
     const conditions = [];
     if (q) {
@@ -730,7 +743,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
           ? conditions[0]
           : and(...conditions);
 
-    const query = db.select().from(works).orderBy(desc(works.updatedAt));
+    const query = db.select().from(works).orderBy(parseSort(sort, works));
     const rows = where
       ? await query.where(where).limit(limit).offset(offset)
       : await query.limit(limit).offset(offset);
@@ -1739,6 +1752,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
       Number.parseInt(c.req.query("limit") ?? "50", 10) || 50,
     );
     const offset = Number.parseInt(c.req.query("offset") ?? "0", 10) || 0;
+    const sort = c.req.query("sort");
 
     const conditions = [];
     if (q) {
@@ -1757,7 +1771,7 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
           ? conditions[0]
           : and(...conditions);
 
-    const query = db.select().from(liveMedia).orderBy(desc(liveMedia.updatedAt));
+    const query = db.select().from(liveMedia).orderBy(parseSort(sort, liveMedia));
     const rows = where
       ? await query.where(where).limit(limit).offset(offset)
       : await query.limit(limit).offset(offset);

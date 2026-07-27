@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   Box, Card, CardContent, CardActions, Typography, Button, Alert, Chip, CircularProgress,
@@ -11,7 +11,8 @@ import { authorSourceUrl } from "../authorSourceUrl";
 import { AuthorAvatar } from "../components/AuthorAvatar";
 import { CoverImage } from "../components/CoverImage";
 import { AuthorLink } from "../components/AuthorLink";
-import { formatDuration, liveToTrack, MetaRow, providerLabel, workToTrack } from "../components/LibraryMeta";
+import { formatDuration, libraryLayoutSx, liveToTrack, MetaRow, providerLabel, workToTrack } from "../components/LibraryMeta";
+import { InfiniteScrollSentinel } from "../components/InfiniteScrollSentinel";
 import { usePlayer } from "../player/PlayerContext";
 import { ASMR } from "../theme";
 import { useThemeMode } from "../ThemeContext";
@@ -40,11 +41,15 @@ export function AuthorPage() {
   const [liveOffset, setLiveOffset] = useState(0);
   const [worksHasMore, setWorksHasMore] = useState(false);
   const [liveHasMore, setLiveHasMore] = useState(false);
+  const [worksLoadingMore, setWorksLoadingMore] = useState(false);
+  const [liveLoadingMore, setLiveLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [viewMode, setViewMode] = useState<AuthorViewMode>(readViewMode);
+  const worksReqIdRef = useRef(0);
+  const liveReqIdRef = useRef(0);
 
   const loadAuthor = useCallback(async () => { setAuthor(await api.getAuthor(provider, authorId)); }, [provider, authorId]);
   const loadLists = useCallback(async () => {
@@ -65,12 +70,32 @@ export function AuthorPage() {
   }, [loadAuthor, loadLists]);
 
   async function loadMoreWorks(): Promise<void> {
-    const batch = await api.works({ provider, authorId, limit: PAGE_SIZE, offset: worksOffset });
-    setWorks((prev) => [...prev, ...batch]); setWorksOffset((o) => o + batch.length); setWorksHasMore(batch.length === PAGE_SIZE);
+    if (worksLoadingMore) return;
+    const reqId = ++worksReqIdRef.current;
+    setWorksLoadingMore(true);
+    try {
+      const batch = await api.works({ provider, authorId, limit: PAGE_SIZE, offset: worksOffset });
+      if (reqId !== worksReqIdRef.current) return;
+      setWorks((prev) => [...prev, ...batch]); setWorksOffset((o) => o + batch.length); setWorksHasMore(batch.length === PAGE_SIZE);
+    } catch (e) {
+      if (reqId === worksReqIdRef.current) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (reqId === worksReqIdRef.current) setWorksLoadingMore(false);
+    }
   }
   async function loadMoreLive(): Promise<void> {
-    const batch = await api.liveMedia({ provider, authorId, limit: PAGE_SIZE, offset: liveOffset });
-    setLiveItems((prev) => [...prev, ...batch]); setLiveOffset((o) => o + batch.length); setLiveHasMore(batch.length === PAGE_SIZE);
+    if (liveLoadingMore) return;
+    const reqId = ++liveReqIdRef.current;
+    setLiveLoadingMore(true);
+    try {
+      const batch = await api.liveMedia({ provider, authorId, limit: PAGE_SIZE, offset: liveOffset });
+      if (reqId !== liveReqIdRef.current) return;
+      setLiveItems((prev) => [...prev, ...batch]); setLiveOffset((o) => o + batch.length); setLiveHasMore(batch.length === PAGE_SIZE);
+    } catch (e) {
+      if (reqId === liveReqIdRef.current) setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      if (reqId === liveReqIdRef.current) setLiveLoadingMore(false);
+    }
   }
   async function onAddSubscription(): Promise<void> {
     if (!author) return; setBusy(true); setError(null); setMsg(null);
@@ -183,25 +208,7 @@ export function AuthorPage() {
           <Typography color="text.disabled">暂无该作者的本地点播作品</Typography>
         ) : (
           <>
-            <Box
-              sx={
-                isList
-                  ? {
-                      display: "flex",
-                      flexDirection: "column",
-                      bgcolor: listSurface,
-                      border: "1px solid",
-                      borderColor: "divider",
-                      borderRadius: 0,
-                      overflow: "hidden",
-                    }
-                  : {
-                      display: "grid",
-                      gridTemplateColumns: `repeat(auto-fill, minmax(${viewMode === "small" ? 148 : 220}px, 1fr))`,
-                      gap: 2,
-                    }
-              }
-            >
+            <Box sx={libraryLayoutSx(isList, viewMode, listSurface)}>
               {works.map((w, index) => {
                 const sc = w.status === "downloaded" ? "success" as const : w.status === "failed" ? "error" as const : w.status === "downloading" || w.status === "queued" ? "warning" as const : "default" as const;
                 if (isList) {
@@ -285,7 +292,6 @@ export function AuthorPage() {
                         <Typography variant="caption" color="text.disabled">时长 {formatDuration(w.durationSeconds)}</Typography>
                       </CardContent>
                       <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
-                        <Chip label={providerLabel(w.provider)} size="small" variant="outlined" />
                         <Chip label={STATUS_LABEL[w.status] ?? w.status} size="small" color={sc} />
                         {w.status === "downloaded" ? (
                           <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)}>{isSmall ? "" : "播放"}</Button>
@@ -298,11 +304,7 @@ export function AuthorPage() {
                 );
               })}
             </Box>
-            {worksHasMore && (
-              <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
-                <Button variant="outlined" onClick={() => { void loadMoreWorks(); }}>加载更多点播</Button>
-              </Box>
-            )}
+            <InfiniteScrollSentinel active={worksHasMore} loading={worksLoadingMore} onVisible={loadMoreWorks} />
           </>
         )}
       </Box>
@@ -313,25 +315,7 @@ export function AuthorPage() {
           <Typography color="text.disabled">暂无该作者的本地直播回放</Typography>
         ) : (
           <>
-            <Box
-              sx={
-                isList
-                  ? {
-                      display: "flex",
-                      flexDirection: "column",
-                      bgcolor: listSurface,
-                      border: "1px solid",
-                      borderColor: "divider",
-                      borderRadius: 0,
-                      overflow: "hidden",
-                    }
-                  : {
-                      display: "grid",
-                      gridTemplateColumns: `repeat(auto-fill, minmax(${viewMode === "small" ? 148 : 220}px, 1fr))`,
-                      gap: 2,
-                    }
-              }
-            >
+            <Box sx={libraryLayoutSx(isList, viewMode, listSurface)}>
               {liveItems.map((m, index) => {
                 const title = m.title || m.roomId;
                 if (isList) {
@@ -380,7 +364,6 @@ export function AuthorPage() {
                         <Typography variant="caption" color="text.disabled">时长 {formatDuration(m.durationSeconds)}</Typography>
                       </CardContent>
                       <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
-                        <Chip label={providerLabel(m.provider)} size="small" variant="outlined" />
                         <Chip label="直播" size="small" color="warning" />
                         <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playLive(m, title)}>{isSmall ? "" : "播放"}</Button>
                       </CardActions>
@@ -389,11 +372,7 @@ export function AuthorPage() {
                 );
               })}
             </Box>
-            {liveHasMore && (
-              <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
-                <Button variant="outlined" onClick={() => { void loadMoreLive(); }}>加载更多回放</Button>
-              </Box>
-            )}
+            <InfiniteScrollSentinel active={liveHasMore} loading={liveLoadingMore} onVisible={loadMoreLive} />
           </>
         )}
       </Box>
