@@ -87,6 +87,7 @@ export const works = sqliteTable(
       .notNull()
       .default(sql`(datetime('now'))`),
     downloadedAt: text("downloaded_at"),
+    publishedAt: text("published_at"),
   },
   (t) => [
     uniqueIndex("works_provider_work_uidx").on(t.provider, t.workId),

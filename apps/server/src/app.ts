@@ -234,7 +234,7 @@ function toPublicWork(row: typeof works.$inferSelect): WorkPublic {
       row.provider as ProviderId,
       row.workId,
     ),
-    publishedAt: publishedAtFromMeta(row.metaJson),
+    publishedAt: row.publishedAt ?? publishedAtFromMeta(row.metaJson),
     error: row.error,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -250,7 +250,9 @@ function parseSort(sort: string | undefined, table: typeof works | typeof liveMe
     case "title_desc": return desc(table.title);
     case "duration_asc": return asc(table.durationSeconds);
     case "duration_desc": return desc(table.durationSeconds);
-    default: return desc(table.updatedAt);
+    default:
+      // "最近更新" sorts by source publish date
+      return desc((table as any).publishedAt ?? (table as any).recordedAt ?? table.updatedAt);
   }
 }
 

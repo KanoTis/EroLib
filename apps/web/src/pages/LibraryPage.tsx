@@ -28,7 +28,7 @@ const RECENT_RAIL_SIZE = 60;
 const DEFAULT_RECENT_DAYS = 7;
 
 const SORT_OPTIONS: { value: string; label: string }[] = [
-  { value: "updated_desc", label: "最近更新" },
+  { value: "updated_desc", label: "最近发布" },
   { value: "title_asc", label: "标题" },
   { value: "title_desc", label: "标题 Z-A" },
   { value: "duration_desc", label: "时长" },
@@ -53,10 +53,10 @@ function compareLibraryItems(a: LibraryItem, b: LibraryItem, sort: string): numb
     const db = b.kind === "vod" ? b.work.durationSeconds : b.media.durationSeconds;
     return dir * ((da ?? 0) - (db ?? 0));
   }
-  // default: updatedAt
-  const ua = a.kind === "vod" ? a.work.updatedAt : a.media.updatedAt;
-  const ub = b.kind === "vod" ? b.work.updatedAt : b.media.updatedAt;
-  return dir * ua.localeCompare(ub);
+  // default: source publish date
+  const pa = a.kind === "vod" ? a.work.publishedAt : a.media.recordedAt;
+  const pb = b.kind === "vod" ? b.work.publishedAt : b.media.recordedAt;
+  return dir * (pa ?? "").localeCompare(pb ?? "");
 }
 
 async function fetchUpToCount<T>(fetchPage: (limit: number, offset: number) => Promise<T[]>, targetCount: number): Promise<{ items: T[]; hasMore: boolean }> {

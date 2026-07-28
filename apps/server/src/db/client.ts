@@ -76,7 +76,8 @@ export async function migrate(client: Client): Promise<void> {
       meta_json TEXT,
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-      downloaded_at TEXT
+      downloaded_at TEXT,
+      published_at TEXT
     );
     CREATE UNIQUE INDEX IF NOT EXISTS works_provider_work_uidx
       ON works(provider, work_id);
@@ -225,6 +226,18 @@ export async function migrate(client: Client): Promise<void> {
   if (!subCols.has("sync_works")) {
     await client.execute(
       `ALTER TABLE live_subscriptions ADD COLUMN sync_works INTEGER NOT NULL DEFAULT 0`,
+    );
+  }
+
+  // published_at for source publish date sorting.
+  const workCols = await tableColNames("works");
+  if (!workCols.has("published_at")) {
+    await client.execute(
+      `ALTER TABLE works ADD COLUMN published_at TEXT`,
+    );
+    // Backfill from existing meta_json for works already downloaded.
+    await client.execute(
+      `UPDATE works SET published_at = json_extract(meta_json, '$.createdAt') WHERE meta_json IS NOT NULL AND json_extract(meta_json, '$.createdAt') IS NOT NULL AND json_extract(meta_json, '$.createdAt') != ''`,
     );
   }
 }
