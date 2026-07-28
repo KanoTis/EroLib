@@ -12,7 +12,7 @@ import {
   Table, TableHead, TableRow, TableCell, TableBody,
   Select, MenuItem, FormControl, InputLabel,
 } from "@mui/material";
-import { Sync } from "@mui/icons-material";
+import { Cached, Sync } from "@mui/icons-material";
 import type { AuthMode, ProviderAccountPublic, ProviderId, SettingsPublic } from "@erolib/shared";
 import { api } from "../api";
 
@@ -26,6 +26,8 @@ export function SettingsPage() {
   const [savingRecentDays, setSavingRecentDays] = useState(false);
   const [historySyncing, setHistorySyncing] = useState(false);
   const [historyMeta, setHistoryMeta] = useState<{ syncedAt: string | null; lastError: string | null; syncing: boolean } | null>(null);
+  const [metaRefreshing, setMetaRefreshing] = useState(false);
+  const [metaProgress, setMetaProgress] = useState("");
 
   const [providers, setProviders] = useState<ProviderAccountPublic[]>([]);
   const [providerSaving, setProviderSaving] = useState(false);
@@ -260,6 +262,37 @@ export function SettingsPage() {
           </CardContent>
         </Card>
       )}
+
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Typography variant="h6" gutterBottom>刷新全部元数据</Typography>
+          <Typography variant="body2" color="text.disabled" sx={{ mb: 1 }}>
+            重新抓取所有作品的标题、封面、时长等元数据并更新 ID3 标签。
+          </Typography>
+          {metaProgress && (
+            <Typography variant="body2" color="text.disabled" sx={{ mb: 1 }}>{metaProgress}</Typography>
+          )}
+          <Button variant="outlined"
+            startIcon={metaRefreshing ? <CircularProgress size={16} /> : <Cached />}
+            disabled={metaRefreshing}
+            onClick={() => {
+              setMetaRefreshing(true); setMetaProgress(""); setError(null);
+              void api.refreshAllMetadata((line) => {
+                if (line.done) {
+                  setMetaRefreshing(false);
+                  setMetaProgress(`完成：刷新 ${line.refreshed}，失败 ${line.failed}，跳过 ${line.skipped}，共 ${line.total}`);
+                } else if (line.provider && line.workId) {
+                  setMetaProgress(`${line.provider}/${line.workId}: ${line.ok ? "已刷新" : line.error}`);
+                }
+              }).catch((e: unknown) => {
+                setError(e instanceof Error ? e.message : String(e));
+                setMetaRefreshing(false);
+              });
+            }}>
+            刷新全部元数据
+          </Button>
+        </CardContent>
+      </Card>
     </Box>
   );
 }

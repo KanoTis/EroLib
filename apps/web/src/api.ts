@@ -120,6 +120,30 @@ export const api = {
       `/api/works/${provider}/${workId}/refresh-metadata`,
       { method: "POST" },
     ),
+  refreshAllMetadata: (onProgress: (line: { done?: boolean; refreshed?: number; failed?: number; skipped?: number; total?: number; provider?: string; workId?: string; ok?: boolean; error?: string; warning?: string }) => void) =>
+    fetch("/api/works/refresh-all-metadata", {
+      method: "POST",
+      credentials: "include",
+    }).then(async (res) => {
+      if (!res.ok || !res.body) throw new Error("Request failed");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split("\n");
+        buf = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try { onProgress(JSON.parse(line)); } catch { /* skip */ }
+        }
+      }
+      if (buf.trim()) {
+        try { onProgress(JSON.parse(buf)); } catch { /* skip */ }
+      }
+    }),
   jobs: () => request<DownloadJobPublic[]>("/api/jobs"),
   liveSubscriptions: () =>
     request<LiveSubscriptionPublic[]>("/api/live/subscriptions"),

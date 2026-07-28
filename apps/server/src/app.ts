@@ -855,6 +855,73 @@ export function createApp(deps: AppDeps): Hono<AuthEnv> {
     }
   });
 
+  app.post("/api/works/refresh-all-metadata", async (c) => {
+    // Stream response as JSON Lines — one object per work.
+    const all = await db.select().from(works);
+    const encoder = new TextEncoder();
+
+    const stream = new ReadableStream({
+      async start(controller) {
+        let refreshed = 0;
+        let failed = 0;
+        let skipped = 0;
+        for (const work of all) {
+          try {
+            const result = await runner.refreshWorkMetadata(
+              work.provider as ProviderId,
+              work.workId,
+            );
+            refreshed++;
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  provider: work.provider,
+                  workId: work.workId,
+                  ok: true,
+                  warning: result.warning,
+                }) + "\n",
+              ),
+            );
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (message.includes("下载进行中")) {
+              skipped++;
+            } else {
+              failed++;
+            }
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  provider: work.provider,
+                  workId: work.workId,
+                  ok: false,
+                  error: message,
+                }) + "\n",
+              ),
+            );
+          }
+        }
+        controller.enqueue(
+          encoder.encode(
+            JSON.stringify({
+              done: true,
+              refreshed,
+              failed,
+              skipped,
+              total: all.length,
+            }) + "\n",
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    return c.body(stream, 200, {
+      "Content-Type": "application/x-ndjson",
+      "Transfer-Encoding": "chunked",
+    });
+  });
+
   app.get("/api/jobs", async (c) => {
     const rows = await db
       .select({
