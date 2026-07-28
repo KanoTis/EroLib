@@ -1,5 +1,6 @@
-import { useState, useCallback, type ReactNode } from "react";
+import { useState, useCallback, type ReactNode, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
+import { keyframes } from "@emotion/react";
 import {
   Box,
   Drawer,
@@ -23,6 +24,42 @@ import { ASMR } from "../theme";
 const DRAWER_WIDTH = 260;
 const COLLAPSED_WIDTH = 56;
 const APP_BAR_HEIGHT = 50;
+
+const titleSlideIn = keyframes`
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+`;
+
+function getPageTitle(pathname: string): string {
+  if (pathname === "/") return "媒体库";
+  if (pathname === "/sync") return "同步";
+  if (pathname === "/sync/add") return "手动添加作者";
+  if (pathname === "/status") return "运行状态";
+  if (pathname === "/settings") return "设置";
+  if (pathname.startsWith("/works/")) return "作品详情";
+  if (pathname.startsWith("/authors/")) return "作者详情";
+  return "Erolib";
+}
+
+function PageTitle({ pathname }: { pathname: string }) {
+  const title = useMemo(() => getPageTitle(pathname), [pathname]);
+  return (
+    <Typography
+      key={pathname}
+      noWrap
+      sx={{
+        fontWeight: 600,
+        fontSize: "1.125rem",
+        letterSpacing: "0.01em",
+        ml: 0.5,
+        flex: 1,
+        animation: `${titleSlideIn} 260ms cubic-bezier(0.16, 1, 0.3, 1)`,
+      }}
+    >
+      {title}
+    </Typography>
+  );
+}
 
 export function Layout({
   authEnabled,
@@ -135,18 +172,7 @@ export function Layout({
             </IconButton>
           )}
 
-          <Typography
-            noWrap
-            sx={{
-              fontWeight: 600,
-              fontSize: "1.125rem",
-              letterSpacing: "0.01em",
-              ml: 0.5,
-              flex: 1,
-            }}
-          >
-            Erolib
-          </Typography>
+          <PageTitle pathname={location.pathname} />
 
           <IconButton
             onClick={() => navigate("/")}

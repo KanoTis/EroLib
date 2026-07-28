@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import {
-  Box, Card, CardContent, Typography, Button, Alert, Chip, CircularProgress,
+  Box, IconButton, Card, CardContent, Typography, Button, Alert, Chip, CircularProgress,
 } from "@mui/material";
 import { ArrowBack, PlayArrow, Refresh } from "@mui/icons-material";
 import type { WorkPublic } from "@erolib/shared";
@@ -99,10 +99,12 @@ export function WorkDetailPage() {
                   <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexWrap: "wrap" }}>
                     <Typography sx={{ fontWeight: 600 }}>本地播放</Typography>
                     {isCurrentTrack && <Chip label={status === "playing" || status === "loading" ? "正在播放" : status === "paused" ? "已暂停" : status === "error" ? "播放出错" : "当前曲目"} size="small" color="warning" />}
-                    <Button variant="contained" color="primary" startIcon={<PlayArrow />}
-                      onClick={() => play({ id: `vod:${work.provider}:${work.workId}`, kind: "vod", provider: work.provider, mediaId: work.workId, title: work.title, subtitle: work.authorName ?? work.authorId ?? undefined, src: api.audioUrl(work.provider, work.workId), artworkUrl: work.coverPath ? api.coverUrl(work.provider, work.workId) : null })}>
-                      播放
-                    </Button>
+                    <IconButton
+                      onClick={() => play({ id: `vod:${work.provider}:${work.workId}`, kind: "vod", provider: work.provider, mediaId: work.workId, title: work.title, subtitle: work.authorName ?? work.authorId ?? undefined, src: api.audioUrl(work.provider, work.workId), artworkUrl: work.coverPath ? api.coverUrl(work.provider, work.workId) : null })}
+                      aria-label="播放"
+                    >
+                      <PlayArrow />
+                    </IconButton>
                   </Box>
                 </Box>
               ) : (

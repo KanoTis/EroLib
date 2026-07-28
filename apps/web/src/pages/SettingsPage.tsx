@@ -66,7 +66,6 @@ export function SettingsPage() {
     <Box>
       <Box sx={{ mb: 3 }}>
         <Typography variant="overline" color="text.disabled">System</Typography>
-        <Typography variant="h4">设置</Typography>
         <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>同步节奏、关注历史后台同步与渠道账号。</Typography>
       </Box>
 

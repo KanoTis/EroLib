@@ -58,7 +58,6 @@ export function SubscribeAddPage() {
       <Box sx={{ mb: 3, display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 2 }}>
         <Box>
           <Typography variant="overline" color="text.disabled">Sync</Typography>
-          <Typography variant="h4">手动添加作者</Typography>
           <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>搜索并选择作者加入订阅名单。</Typography>
         </Box>
         <Button variant="outlined" component={Link} to="/sync">返回订阅列表</Button>

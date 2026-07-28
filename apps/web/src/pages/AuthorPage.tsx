@@ -1,26 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import {
-  Box, Card, CardContent, CardActions, Typography, Button, Alert, Chip, CircularProgress,
+  Box, Card, CardContent, Typography, Button, Alert, Chip, CircularProgress,
   ToggleButtonGroup, ToggleButton,
 } from "@mui/material";
-import { ArrowBack, OpenInNew, PlayArrow, GridView, ViewList, ViewModule } from "@mui/icons-material";
+import { ArrowBack, OpenInNew, GridView, ViewList, ViewModule } from "@mui/icons-material";
 import type { AuthorPublic, LiveMediaPublic, WorkPublic } from "@erolib/shared";
 import { api } from "../api";
 import { authorSourceUrl } from "../authorSourceUrl";
 import { AuthorAvatar } from "../components/AuthorAvatar";
-import { CoverImage } from "../components/CoverImage";
-import { AuthorLink } from "../components/AuthorLink";
-import { libraryLayoutSx, liveToTrack, MetaRow, providerLabel, workToTrack } from "../components/LibraryMeta";
+import { libraryLayoutSx, liveToTrack, providerLabel, workToTrack } from "../components/LibraryMeta";
+import { MediaItem } from "../components/MediaItem";
 import { InfiniteScrollSentinel } from "../components/InfiniteScrollSentinel";
 import { useGoBack, usePageSnapshot } from "../navigation";
 import { usePlayer } from "../player/PlayerContext";
 import { ASMR } from "../theme";
 import { useThemeMode } from "../ThemeContext";
 
-const STATUS_LABEL: Record<string, string> = {
-  downloaded: "已下载", queued: "队列中", downloading: "下载中", failed: "失败", discovered: "已发现",
-};
 const PAGE_SIZE = 50;
 type AuthorViewMode = "small" | "standard" | "list";
 const VIEW_MODE_KEY = "erolib.library.viewMode";
@@ -61,6 +57,7 @@ export function AuthorPage() {
   const [loading, setLoading] = useState(!restored);
   const [busy, setBusy] = useState(false);
   const [viewMode, setViewMode] = useState<AuthorViewMode>(readViewMode);
+  const [mediaTab, setMediaTab] = useState<"vod" | "live">("vod");
   const worksReqIdRef = useRef(0);
   const liveReqIdRef = useRef(0);
 
@@ -131,6 +128,11 @@ export function AuthorPage() {
     try { await api.patchLiveSubscription(author.subscription.id, { [key]: next }); await loadAuthor(); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); }
   }
+  async function deleteLiveMedia(m: LiveMediaPublic): Promise<void> {
+    if (!confirm(`删除直播录制「${m.title || m.roomId}」？`)) return;
+    try { setError(null); await api.deleteLiveMedia(m.provider, m.roomId); setLiveItems((prev) => prev.filter((x) => !(x.provider === m.provider && x.roomId === m.roomId))); setLiveOffset((prev) => Math.max(0, prev - 1)); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+  }
   function playVod(w: WorkPublic): void {
     const queue = works.filter((x) => x.status === "downloaded").map(workToTrack);
     play(workToTrack(w), queue);
@@ -157,7 +159,6 @@ export function AuthorPage() {
   const displayName = author.displayName || author.username || author.authorId;
   const sourceUrl = authorSourceUrl(author.provider, author.authorId);
   const isList = viewMode === "list";
-  const isSmall = viewMode === "small" && !isList;
   const listSurface = isLight ? "#fff" : ASMR.drawerDark;
 
   return (
@@ -218,7 +219,11 @@ export function AuthorPage() {
         </CardContent>
       </Card>
 
-      <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+      <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 1 }}>
+        <ToggleButtonGroup value={mediaTab} exclusive size="small" onChange={(_, v) => { if (v) setMediaTab(v); }}>
+          <ToggleButton value="vod">点播</ToggleButton>
+          <ToggleButton value="live">直播</ToggleButton>
+        </ToggleButtonGroup>
         <ToggleButtonGroup value={viewMode} exclusive size="small" onChange={(_, v) => { if (v) { setViewMode(v); localStorage.setItem(VIEW_MODE_KEY, v); } }}>
           <ToggleButton value="small" aria-label="小尺寸"><ViewModule fontSize="small" /></ToggleButton>
           <ToggleButton value="standard" aria-label="标准尺寸"><GridView fontSize="small" /></ToggleButton>
@@ -226,219 +231,58 @@ export function AuthorPage() {
         </ToggleButtonGroup>
       </Box>
 
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h6" gutterBottom>点播作品</Typography>
-        {works.length === 0 ? (
-          <Typography color="text.disabled">暂无该作者的本地点播作品</Typography>
-        ) : (
-          <>
-            <Box sx={libraryLayoutSx(isList, viewMode, listSurface)}>
-              {works.map((w, index) => {
-                const sc = w.status === "downloaded" ? "success" as const : w.status === "failed" ? "error" as const : w.status === "downloading" || w.status === "queued" ? "warning" as const : "default" as const;
-                if (isList) {
+      {mediaTab === "vod" ? (
+        <Box>
+          {works.length === 0 ? (
+            <Typography color="text.disabled">暂无该作者的本地点播作品</Typography>
+          ) : (
+            <>
+              <Box sx={libraryLayoutSx(isList, viewMode, listSurface)}>
+                {works.map((w, index) => (
+                  <MediaItem
+                    key={`vod:${w.id}`}
+                    item={{ kind: "vod", key: `vod:${w.id}`, work: w }}
+                    viewMode={viewMode}
+                    index={index}
+                    total={works.length}
+                    onPlay={() => playVod(w)}
+                    titleHref={`/works/${w.provider}/${w.workId}`}
+                    playDisabled={w.status !== "downloaded"}
+                  />
+                ))}
+              </Box>
+              <InfiniteScrollSentinel active={worksHasMore} loading={worksLoadingMore} onVisible={loadMoreWorks} />
+            </>
+          )}
+        </Box>
+      ) : (
+        <Box>
+          {liveItems.length === 0 ? (
+            <Typography color="text.disabled">暂无该作者的本地直播回放</Typography>
+          ) : (
+            <>
+              <Box sx={libraryLayoutSx(isList, viewMode, listSurface)}>
+                {liveItems.map((m, index) => {
+                  const title = m.title || m.roomId;
                   return (
-                    <Box
-                      key={`vod:${w.id}`}
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 2,
-                        pl: 0,
-                        pr: 2,
-                        py: 0,
-                        borderBottom: index < works.length - 1 ? "1px solid" : "none",
-                        borderColor: "divider",
-                        "&:hover": { bgcolor: isLight ? "rgba(25,118,210,0.04)" : "rgba(255,255,255,0.04)" },
-                      }}
-                    >
-                      <CoverImage
-                        provider={w.provider}
-                        workId={w.workId}
-                        title={w.title}
-                        authorName={w.authorName}
-                        coverPath={w.coverPath}
-                        size="list"
-                        durationSeconds={w.durationSeconds}
-                      />
-                      <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 0.5, py: 1.25 }}>
-                        <Typography
-                          component={Link}
-                          to={`/works/${w.provider}/${w.workId}`}
-                          sx={{
-                            fontWeight: 600,
-                            fontSize: "0.95rem",
-                            color: "text.primary",
-                            textDecoration: "none",
-                            "&:hover": { color: "primary.main" },
-                            overflow: "hidden",
-                            display: "-webkit-box",
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: "vertical",
-                          }}
-                        >
-                          {w.title}
-                        </Typography>
-                        <MetaRow parts={[
-                          <AuthorLink key="a" provider={w.provider} authorId={w.authorId}>{w.authorName ?? w.authorId ?? "未知作者"}</AuthorLink>,
-                          providerLabel(w.provider),
-                        ]} />
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, flexWrap: "wrap" }}>
-                          <Chip label={STATUS_LABEL[w.status] ?? w.status} size="small" color={sc} />
-                        </Box>
-                      </Box>
-                      <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-                        {w.status === "downloaded" ? (
-                          <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)}>播放</Button>
-                        ) : (
-                          <Typography variant="caption" color="text.disabled">不可播</Typography>
-                        )}
-                      </Box>
-                    </Box>
-                  );
-                }
-                return (
-                  <Card key={`vod:${w.id}`} sx={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <CoverImage
-                      provider={w.provider}
-                      workId={w.workId}
-                      title={w.title}
-                      authorName={w.authorName}
-                      coverPath={w.coverPath}
-                      size="card"
-                      durationSeconds={w.durationSeconds}
-                    />
-                    <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-                      <CardContent sx={{ flex: 1, py: 1 }}>
-                        <Typography
-                          component={Link}
-                          to={`/works/${w.provider}/${w.workId}`}
-                          sx={{
-                            fontWeight: 600,
-                            fontSize: "0.95rem",
-                            color: "text.primary",
-                            textDecoration: "none",
-                            "&:hover": { color: "primary.main" },
-                            overflow: "hidden",
-                            display: "-webkit-box",
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: "vertical",
-                          }}
-                        >
-                          {w.title}
-                        </Typography>
-                        <Typography variant="body2" color="text.disabled" noWrap>
-                          <AuthorLink provider={w.provider} authorId={w.authorId}>{w.authorName ?? w.authorId ?? "未知作者"}</AuthorLink>
-                          {" · "}{providerLabel(w.provider)}
-                        </Typography>
-                      </CardContent>
-                      <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
-                        <Chip label={STATUS_LABEL[w.status] ?? w.status} size="small" color={sc} />
-                        {w.status === "downloaded" ? (
-                          <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playVod(w)}>{isSmall ? "" : "播放"}</Button>
-                        ) : (
-                          <Typography variant="caption" color="text.disabled">不可播</Typography>
-                        )}
-                      </CardActions>
-                    </Box>
-                  </Card>
-                );
-              })}
-            </Box>
-            <InfiniteScrollSentinel active={worksHasMore} loading={worksLoadingMore} onVisible={loadMoreWorks} />
-          </>
-        )}
-      </Box>
-
-      <Box>
-        <Typography variant="h6" gutterBottom>直播回放</Typography>
-        {liveItems.length === 0 ? (
-          <Typography color="text.disabled">暂无该作者的本地直播回放</Typography>
-        ) : (
-          <>
-            <Box sx={libraryLayoutSx(isList, viewMode, listSurface)}>
-              {liveItems.map((m, index) => {
-                const title = m.title || m.roomId;
-                if (isList) {
-                  return (
-                    <Box
+                    <MediaItem
                       key={`live:${m.id}`}
-                      sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 2,
-                        pl: 0,
-                        pr: 2,
-                        py: 0,
-                        borderBottom: index < liveItems.length - 1 ? "1px solid" : "none",
-                        borderColor: "divider",
-                        "&:hover": { bgcolor: isLight ? "rgba(25,118,210,0.04)" : "rgba(255,255,255,0.04)" },
-                      }}
-                    >
-                      <CoverImage
-                        provider={m.provider}
-                        workId={m.roomId}
-                        title={title}
-                        authorName={m.authorName}
-                        coverPath={null}
-                        size="list"
-                        durationSeconds={m.durationSeconds}
-                        badge={<Chip label="直播" size="small" color="warning" />}
-                      />
-                      <Box sx={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 0.5, py: 1.25 }}>
-                        <Typography
-                          sx={{
-                            fontWeight: 600,
-                            fontSize: "0.95rem",
-                            overflow: "hidden",
-                            display: "-webkit-box",
-                            WebkitLineClamp: 2,
-                            WebkitBoxOrient: "vertical",
-                          }}
-                        >
-                          {title}
-                        </Typography>
-                        <MetaRow parts={[
-                          <AuthorLink key="a" provider={m.provider} authorId={m.authorId}>{m.authorName ?? m.authorId ?? "未知"}</AuthorLink>,
-                          providerLabel(m.provider),
-                        ]} />
-                      </Box>
-                      <Box sx={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-                        <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playLive(m, title)}>播放</Button>
-                      </Box>
-                    </Box>
-                  );
-                }
-                return (
-                  <Card key={`live:${m.id}`} sx={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-                    <CoverImage
-                      provider={m.provider}
-                      workId={m.roomId}
-                      title={title}
-                      authorName={m.authorName}
-                      coverPath={null}
-                      size="card"
-                      durationSeconds={m.durationSeconds}
-                      badge={<Chip label="直播" size="small" color="warning" />}
+                      item={{ kind: "live", key: `live:${m.id}`, media: m }}
+                      viewMode={viewMode}
+                      index={index}
+                      total={liveItems.length}
+                      onPlay={() => playLive(m, title)}
+                      showDelete
+                      onDelete={() => { void deleteLiveMedia(m); }}
                     />
-                    <Box sx={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
-                      <CardContent sx={{ flex: 1, py: 1 }}>
-                        <Typography sx={{ fontWeight: 600, fontSize: "0.95rem", overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>{title}</Typography>
-                        <Typography variant="body2" color="text.disabled" noWrap>
-                          {m.authorName ?? m.authorId} · {providerLabel(m.provider)}
-                        </Typography>
-                      </CardContent>
-                      <CardActions sx={{ pt: 0, flexWrap: "wrap", gap: 0.5 }}>
-                        <Button size="small" variant="contained" color="primary" startIcon={<PlayArrow />} onClick={() => playLive(m, title)}>{isSmall ? "" : "播放"}</Button>
-                      </CardActions>
-                    </Box>
-                  </Card>
-                );
-              })}
-            </Box>
-            <InfiniteScrollSentinel active={liveHasMore} loading={liveLoadingMore} onVisible={loadMoreLive} />
-          </>
-        )}
-      </Box>
+                  );
+                })}
+              </Box>
+              <InfiniteScrollSentinel active={liveHasMore} loading={liveLoadingMore} onVisible={loadMoreLive} />
+            </>
+          )}
+        </Box>
+      )}
     </Box>
   );
 }

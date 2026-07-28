@@ -137,7 +137,6 @@ export function StatusPage() {
       <Box sx={{ mb: 3, display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 2 }}>
         <Box>
           <Typography variant="overline" color="text.disabled" sx={{ letterSpacing: "0.08em" }}>Status</Typography>
-          <Typography variant="h4">运行状态</Typography>
         </Box>
         <Button variant="outlined" size="small" disabled={busy} onClick={() => { void onPoll(); }} startIcon={<Refresh />}>
           立即检测直播

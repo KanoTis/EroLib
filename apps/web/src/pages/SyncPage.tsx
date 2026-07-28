@@ -69,7 +69,6 @@ export function SyncPage() {
     <Box>
       <Box sx={{ mb: 3 }}>
         <Typography variant="overline" color="text.disabled">Sync</Typography>
-        <Typography variant="h4">同步</Typography>
         <Typography variant="body2" color="text.disabled" sx={{ mt: 0.5 }}>管理作者订阅，按渠道控制 VOD 同步。</Typography>
       </Box>
 
